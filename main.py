@@ -212,8 +212,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '--num-workers',
         type=int,
-        default=0,
-        help='Liczba procesów do ładowania danych'
+        default=4,
+        help='Liczba procesów do ładowania danych (0 = główny wątek, zalecane 4-8 dla GPU)'
     )
 
     return parser.parse_args()
@@ -1025,6 +1025,11 @@ def main() -> None:
     """
     Główna funkcja programu.
     """
+    # Optymalizacja dla GPU z Tensor Cores (RTX 20xx, 30xx, 40xx, A-series)
+    # Umożliwia wykorzystanie TF32 dla operacji macierzowych - znaczne przyspieszenie
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision('medium')
+
     # Parsowanie argumentów
     args = parse_arguments()
 
