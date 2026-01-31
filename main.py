@@ -1025,10 +1025,12 @@ def main() -> None:
     """
     Główna funkcja programu.
     """
-    # Optymalizacja dla GPU z Tensor Cores (RTX 20xx, 30xx, 40xx, A-series)
-    # Umożliwia wykorzystanie TF32 dla operacji macierzowych - znaczne przyspieszenie
+    # Optymalizacje GPU
     if torch.cuda.is_available():
+        # TF32 dla Tensor Cores (RTX 20xx, 30xx, 40xx, A-series)
         torch.set_float32_matmul_precision('medium')
+        # cuDNN benchmark - automatyczny wybór najszybszych algorytmów dla LSTM
+        torch.backends.cudnn.benchmark = True
 
     # Parsowanie argumentów
     args = parse_arguments()

@@ -163,7 +163,9 @@ class GaussianDecoder(nn.Module):
             sigma_seq[:, t, :] = sigma
 
             # Przygotowanie następnego inputu
-            if target is not None and torch.rand(1).item() < teacher_forcing_ratio:
+            # Używamy porównania tensorów zamiast .item() żeby uniknąć synchronizacji CPU-GPU
+            use_teacher_forcing = target is not None and torch.rand(1, device=device) < teacher_forcing_ratio
+            if use_teacher_forcing:
                 # Teacher forcing - używamy prawdziwej wartości
                 decoder_input = target[:, t, :].unsqueeze(1)
             else:
