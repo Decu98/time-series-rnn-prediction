@@ -290,7 +290,118 @@ def generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     print(f"\nDane zapisane do: {args.data_path}")
     print(f"Kształt danych: {dataset['trajectories'].shape}")
 
+    # Wizualizacja losowej trajektorii
+    plot_sample_trajectory(dataset, data_dir)
+
     return dataset
+
+
+def plot_sample_trajectory(dataset: Dict[str, np.ndarray], output_dir: Path) -> None:
+    """
+    Generuje wykres losowej trajektorii z datasetu.
+
+    Args:
+        dataset: Słownik z danymi (trajectories, time, params)
+        output_dir: Katalog na zapis wykresu
+    """
+    import matplotlib.pyplot as plt
+
+    # Losowy indeks trajektorii
+    idx = np.random.randint(0, dataset['trajectories'].shape[0])
+    trajectory = dataset['trajectories'][idx]
+    time = dataset['time']
+    params = dataset['params'][idx] if isinstance(dataset['params'], list) else dataset['params'][idx]
+
+    x = trajectory[:, 0]  # położenie
+    v = trajectory[:, 1]  # prędkość
+
+    # Tworzenie wykresu 2x2
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig.suptitle(f'Przykładowa trajektoria #{idx} z wygenerowanego datasetu', fontsize=14, fontweight='bold')
+
+    # 1. Położenie w czasie
+    axes[0, 0].plot(time, x, 'b-', linewidth=1.2)
+    axes[0, 0].set_xlabel('Czas [s]')
+    axes[0, 0].set_ylabel('Położenie x [m]')
+    axes[0, 0].set_title('Położenie vs czas')
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+
+    # 2. Prędkość w czasie
+    axes[0, 1].plot(time, v, 'r-', linewidth=1.2)
+    axes[0, 1].set_xlabel('Czas [s]')
+    axes[0, 1].set_ylabel('Prędkość v [m/s]')
+    axes[0, 1].set_title('Prędkość vs czas')
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+
+    # 3. Portret fazowy
+    axes[1, 0].plot(x, v, 'g-', linewidth=1.2)
+    axes[1, 0].plot(x[0], v[0], 'go', markersize=10, label='Start')
+    axes[1, 0].plot(x[-1], v[-1], 'rs', markersize=10, label='Koniec')
+    axes[1, 0].set_xlabel('Położenie x [m]')
+    axes[1, 0].set_ylabel('Prędkość v [m/s]')
+    axes[1, 0].set_title('Portret fazowy (przestrzeń stanów)')
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].legend()
+    axes[1, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+    axes[1, 0].axvline(x=0, color='k', linestyle='-', linewidth=0.5)
+
+    # 4. Informacje o parametrach
+    axes[1, 1].axis('off')
+
+    # Wyciągnięcie parametrów
+    if isinstance(params, np.ndarray):
+        mass, damping, stiffness, x0, v0 = params[:5]
+        omega_0 = np.sqrt(stiffness / mass)
+        zeta = damping / (2 * np.sqrt(stiffness * mass))
+    else:
+        mass = params['mass']
+        damping = params['damping']
+        stiffness = params['stiffness']
+        x0 = params['x0']
+        v0 = params['v0']
+        omega_0 = params.get('omega_0', np.sqrt(stiffness / mass))
+        zeta = params.get('zeta', damping / (2 * np.sqrt(stiffness * mass)))
+
+    info_text = f"""
+    PARAMETRY OSCYLATORA TŁUMIONEGO
+    ════════════════════════════════════
+
+    Równanie ruchu:
+    m·x'' + c·x' + k·x = 0
+
+    Parametry fizyczne:
+    ─────────────────────────────────────
+    Masa (m):              {mass:.4f} kg
+    Tłumienie (c):         {damping:.4f} Ns/m
+    Sztywność (k):         {stiffness:.4f} N/m
+
+    Warunki początkowe:
+    ─────────────────────────────────────
+    Położenie (x₀):        {x0:.4f} m
+    Prędkość (v₀):         {v0:.4f} m/s
+
+    Parametry charakterystyczne:
+    ─────────────────────────────────────
+    Częstość własna (ω₀): {omega_0:.4f} rad/s
+    Wsp. tłumienia (ζ):    {zeta:.4f}
+
+    Typ ruchu: {'Podkrytyczny (oscylacje)' if zeta < 1 else 'Nadkrytyczny (brak oscylacji)' if zeta > 1 else 'Krytyczny'}
+    """
+
+    axes[1, 1].text(0.1, 0.95, info_text, transform=axes[1, 1].transAxes,
+                    fontsize=11, verticalalignment='top', fontfamily='monospace',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.tight_layout()
+
+    # Zapis wykresu
+    plot_path = output_dir / 'sample_trajectory.png'
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    print(f"\nWykres przykładowej trajektorii zapisany do: {plot_path}")
 
 
 def load_or_generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
@@ -307,6 +418,9 @@ def load_or_generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
         print(f"\nŁadowanie danych z: {args.data_path}")
         dataset = load_dataset(args.data_path)
         print(f"Załadowano dane o kształcie: {dataset['trajectories'].shape}")
+        # Wizualizacja przykładowej trajektorii
+        data_dir = Path(args.data_path).parent
+        plot_sample_trajectory(dataset, data_dir)
     else:
         print(f"\nPlik {args.data_path} nie istnieje - generowanie nowych danych...")
         dataset = generate_data(args)
