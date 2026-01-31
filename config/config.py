@@ -9,14 +9,45 @@ Zawiera dataclassy z hiperparametrami dla:
 
 Obsługiwane platformy GPU:
 - NVIDIA (CUDA)
-- AMD (ROCm)
+- AMD (ROCm na Linux, DirectML na Windows)
 - Apple Silicon (MPS)
 """
 
+import platform
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 import torch
+
+
+def is_directml_available() -> bool:
+    """
+    Sprawdza czy DirectML (AMD/Intel na Windows) jest dostępne.
+
+    Returns:
+        bool: True jeśli torch-directml jest zainstalowane i działa
+    """
+    try:
+        import torch_directml
+        return torch_directml.is_available()
+    except ImportError:
+        return False
+
+
+def get_directml_device() -> Optional["torch.device"]:
+    """
+    Zwraca urządzenie DirectML jeśli dostępne.
+
+    Returns:
+        torch.device lub None
+    """
+    try:
+        import torch_directml
+        if torch_directml.is_available():
+            return torch_directml.device()
+    except ImportError:
+        pass
+    return None
 
 
 @dataclass
@@ -184,12 +215,12 @@ def get_device(preferred: str = "auto") -> torch.device:
 
     Obsługuje:
     - NVIDIA GPU (CUDA)
-    - AMD GPU (ROCm - kompatybilne z CUDA API)
+    - AMD GPU (ROCm na Linux, DirectML na Windows)
     - Apple Silicon (MPS)
     - CPU jako fallback
 
     Args:
-        preferred: Preferowane urządzenie ('auto', 'cpu', 'cuda', 'mps')
+        preferred: Preferowane urządzenie ('auto', 'cpu', 'cuda', 'mps', 'directml')
 
     Returns:
         torch.device: Wykryte urządzenie
@@ -210,13 +241,30 @@ def get_device(preferred: str = "auto") -> torch.device:
         print("UWAGA: MPS niedostępne, używam CPU")
         return torch.device("cpu")
 
+    if preferred == "directml":
+        dml_device = get_directml_device()
+        if dml_device is not None:
+            return dml_device
+        print("UWAGA: DirectML niedostępne, używam CPU")
+        return torch.device("cpu")
+
     # Auto-detekcja (preferred == "auto")
-    # Priorytet: CUDA (NVIDIA/AMD ROCm) > MPS (Apple) > CPU
+    # Priorytet: CUDA (NVIDIA/AMD ROCm) > DirectML (Windows) > MPS (Apple) > CPU
+
+    # 1. CUDA (NVIDIA lub AMD ROCm na Linux)
     if torch.cuda.is_available():
         device_name = torch.cuda.get_device_name(0)
-        print(f"Wykryto GPU: {device_name}")
+        print(f"Wykryto GPU (CUDA): {device_name}")
         return torch.device("cuda")
 
+    # 2. DirectML (AMD/Intel na Windows)
+    if platform.system() == "Windows":
+        dml_device = get_directml_device()
+        if dml_device is not None:
+            print("Wykryto GPU (DirectML)")
+            return dml_device
+
+    # 3. MPS (Apple Silicon)
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         if torch.backends.mps.is_built():
             print("Wykryto Apple Silicon (MPS)")
@@ -230,8 +278,11 @@ def get_accelerator_config(preferred: str = "auto") -> dict:
     """
     Zwraca konfigurację akceleratora dla PyTorch Lightning.
 
+    UWAGA: DirectML nie jest wspierany przez PyTorch Lightning.
+    Dla DirectML używaj ręcznej pętli treningowej lub CPU w Lightning.
+
     Args:
-        preferred: Preferowane urządzenie ('auto', 'cpu', 'cuda', 'mps')
+        preferred: Preferowane urządzenie ('auto', 'cpu', 'cuda', 'mps', 'directml')
 
     Returns:
         dict: Słownik z kluczami 'accelerator' i 'devices' dla pl.Trainer
@@ -249,6 +300,13 @@ def get_accelerator_config(preferred: str = "auto") -> dict:
             return {"accelerator": "mps", "devices": 1}
         return {"accelerator": "cpu", "devices": 1}
 
+    if preferred == "directml":
+        # DirectML nie jest wspierany przez PyTorch Lightning
+        # Użyj ręcznej pętli treningowej lub CPU
+        print("UWAGA: DirectML nie jest wspierany przez PyTorch Lightning.")
+        print("       Dla treningu na AMD GPU (Windows) użyj ręcznej pętli.")
+        return {"accelerator": "cpu", "devices": 1}
+
     # Auto-detekcja
     if torch.cuda.is_available():
         return {"accelerator": "gpu", "devices": 1}
@@ -256,6 +314,11 @@ def get_accelerator_config(preferred: str = "auto") -> dict:
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         if torch.backends.mps.is_built():
             return {"accelerator": "mps", "devices": 1}
+
+    # DirectML w auto-detekcji - fallback do CPU dla Lightning
+    if platform.system() == "Windows" and is_directml_available():
+        print("UWAGA: DirectML wykryty, ale PyTorch Lightning go nie wspiera.")
+        print("       Używam CPU dla Lightning. Rozważ ręczną pętlę treningową.")
 
     return {"accelerator": "cpu", "devices": 1}
 
@@ -268,23 +331,37 @@ def print_device_info() -> None:
     print("INFORMACJE O URZĄDZENIACH OBLICZENIOWYCH")
     print("=" * 50)
 
-    print(f"\nPyTorch wersja: {torch.__version__}")
+    print(f"\nSystem: {platform.system()} {platform.release()}")
+    print(f"PyTorch wersja: {torch.__version__}")
 
-    # CUDA (NVIDIA / AMD ROCm)
+    # CUDA (NVIDIA / AMD ROCm na Linux)
     print(f"\nCUDA dostępne: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
-        print(f"  - Wersja CUDA: {torch.version.cuda}")
+        cuda_version = torch.version.cuda if torch.version.cuda else "ROCm"
+        print(f"  - Wersja: {cuda_version}")
         print(f"  - Liczba GPU: {torch.cuda.device_count()}")
         for i in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(i)
             memory_gb = props.total_memory / (1024**3)
             print(f"  - GPU {i}: {props.name} ({memory_gb:.1f} GB)")
 
+    # DirectML (AMD/Intel na Windows)
+    dml_available = is_directml_available()
+    print(f"\nDirectML (Windows AMD/Intel): {dml_available}")
+    if dml_available:
+        try:
+            import torch_directml
+            print(f"  - torch-directml zainstalowany")
+            print(f"  - UWAGA: Wymaga ręcznej pętli treningowej (brak wsparcia Lightning)")
+        except ImportError:
+            pass
+
     # MPS (Apple Silicon)
     mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     mps_built = hasattr(torch.backends, "mps") and torch.backends.mps.is_built()
-    print(f"\nMPS (Apple Silicon) dostępne: {mps_available}")
-    print(f"MPS zbudowane: {mps_built}")
+    print(f"\nMPS (Apple Silicon): {mps_available}")
+    if mps_available:
+        print(f"  - MPS zbudowane: {mps_built}")
 
     # Rekomendacja
     device = get_device("auto")

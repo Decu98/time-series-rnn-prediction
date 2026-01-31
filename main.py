@@ -204,8 +204,8 @@ def parse_arguments() -> argparse.Namespace:
         '--device',
         type=str,
         default='auto',
-        choices=['auto', 'cpu', 'cuda', 'mps'],
-        help='Urządzenie obliczeniowe'
+        choices=['auto', 'cpu', 'cuda', 'mps', 'directml'],
+        help='Urządzenie obliczeniowe (directml dla AMD na Windows)'
     )
     parser.add_argument(
         '--num-workers',

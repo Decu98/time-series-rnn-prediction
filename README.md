@@ -207,12 +207,14 @@ class TrainingConfig:
 
 Program automatycznie wykrywa i wykorzystuje dostępny akcelerator:
 
-| Platforma | Akcelerator | Wymagania |
-|-----------|-------------|-----------|
-| **NVIDIA GPU** | CUDA | Sterowniki NVIDIA + CUDA Toolkit |
-| **AMD GPU** | ROCm | PyTorch z ROCm (Linux) |
-| **Apple Silicon** | MPS | macOS 12.3+ z PyTorch 1.12+ |
-| **CPU** | - | Zawsze dostępne (fallback) |
+| Platforma | System | Akcelerator | Wymagania |
+|-----------|--------|-------------|-----------|
+| **NVIDIA GPU** | Wszystkie | CUDA | Sterowniki NVIDIA + CUDA Toolkit |
+| **AMD GPU** | Linux | ROCm | PyTorch z ROCm |
+| **AMD GPU** | Windows | DirectML | torch-directml |
+| **Intel GPU** | Windows | DirectML | torch-directml |
+| **Apple Silicon** | macOS | MPS | macOS 12.3+ z PyTorch 1.12+ |
+| **CPU** | Wszystkie | - | Zawsze dostępne (fallback) |
 
 ### Automatyczne wykrywanie (domyślne)
 ```bash
@@ -222,8 +224,9 @@ python main.py --mode train --device auto
 ### Wymuszenie konkretnego urządzenia
 ```bash
 python main.py --mode train --device cpu
-python main.py --mode train --device cuda  # NVIDIA / AMD ROCm
-python main.py --mode train --device mps   # Apple Silicon
+python main.py --mode train --device cuda      # NVIDIA / AMD ROCm (Linux)
+python main.py --mode train --device mps       # Apple Silicon
+python main.py --mode train --device directml  # AMD/Intel na Windows
 ```
 
 ### Sprawdzenie dostępnych urządzeń
@@ -234,22 +237,30 @@ print_device_info()
 
 ### Instalacja PyTorch dla różnych platform
 
-**NVIDIA (CUDA):**
+**NVIDIA (CUDA) - Windows/Linux:**
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ```
 
-**AMD (ROCm) - tylko Linux:**
+**AMD (ROCm) - Linux:**
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.0
 ```
 
-**Apple Silicon (MPS):**
+**AMD/Intel (DirectML) - Windows:**
+```bash
+pip install torch torchvision
+pip install torch-directml
+```
+> **Uwaga:** DirectML wymaga ręcznej pętli treningowej - PyTorch Lightning nie wspiera DirectML.
+> Dla pełnej integracji z Lightning na Windows z AMD, rozważ użycie CPU.
+
+**Apple Silicon (MPS) - macOS:**
 ```bash
 pip install torch torchvision  # MPS jest domyślnie wspierany
 ```
 
-**CPU:**
+**CPU - wszystkie platformy:**
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ```

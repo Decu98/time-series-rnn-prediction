@@ -20,3 +20,7 @@ tqdm>=4.65.0
 
 # Opcjonalne - optymalizacja hiperparametrów
 # optuna>=3.0.0
+
+# Opcjonalne - AMD/Intel GPU na Windows (DirectML)
+# Odkomentuj poniższą linię jeśli używasz AMD/Intel GPU na Windows:
+# torch-directml>=0.2.0
