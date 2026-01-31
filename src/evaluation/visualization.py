@@ -383,6 +383,128 @@ def plot_uncertainty_evolution(
     return fig
 
 
+def plot_full_trajectory_with_prediction(
+    full_trajectory: np.ndarray,
+    full_time: np.ndarray,
+    input_start_idx: int,
+    T_in: int,
+    T_out: int,
+    mu_seq: np.ndarray,
+    sigma_seq: np.ndarray,
+    feature_idx: int = 0,
+    feature_name: str = 'Położenie x [m]',
+    figsize: Tuple[int, int] = (16, 8),
+    title: Optional[str] = None,
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Tworzy wykres pełnej trajektorii z zaznaczoną predykcją.
+
+    Pokazuje całą oryginalną trajektorię, z wyróżnieniem:
+    - Okna wejściowego (input)
+    - Fragmentu docelowego (target)
+    - Predykcji z przedziałami ufności
+
+    Args:
+        full_trajectory: Pełna trajektoria (num_steps, features)
+        full_time: Pełny wektor czasu
+        input_start_idx: Indeks początkowy okna wejściowego
+        T_in: Długość okna wejściowego
+        T_out: Długość horyzontu predykcji
+        mu_seq: Predykowana średnia (T_out, features)
+        sigma_seq: Predykowane odchylenie std (T_out, features)
+        feature_idx: Indeks cechy do wizualizacji (0 dla x, 1 dla v)
+        feature_name: Nazwa cechy do etykiet
+        figsize: Rozmiar figury
+        title: Opcjonalny tytuł wykresu
+        save_path: Opcjonalna ścieżka do zapisu wykresu
+
+    Returns:
+        Obiekt Figure matplotlib
+    """
+    # Konwersja tensorów do numpy
+    if isinstance(full_trajectory, torch.Tensor):
+        full_trajectory = full_trajectory.detach().cpu().numpy()
+    if isinstance(mu_seq, torch.Tensor):
+        mu_seq = mu_seq.detach().cpu().numpy()
+    if isinstance(sigma_seq, torch.Tensor):
+        sigma_seq = sigma_seq.detach().cpu().numpy()
+
+    # Indeksy
+    input_end_idx = input_start_idx + T_in
+    output_end_idx = input_end_idx + T_out
+
+    # Wyciągnięcie danych
+    full_values = full_trajectory[:, feature_idx]
+    mu_values = mu_seq[:, feature_idx]
+    sigma_values = sigma_seq[:, feature_idx]
+
+    # Czasy dla predykcji
+    time_prediction = full_time[input_end_idx:output_end_idx]
+
+    # Tworzenie wykresu
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # 1. Pełna trajektoria (cała, szara, w tle)
+    ax.plot(full_time, full_values, 'gray', linewidth=1.5, alpha=0.5, label='Pełna trajektoria')
+
+    # 2. Okno wejściowe (niebieskie, grubsze)
+    ax.plot(full_time[input_start_idx:input_end_idx],
+            full_values[input_start_idx:input_end_idx],
+            'b-', linewidth=2.5, label=f'Okno wejściowe (T_in={T_in})')
+
+    # 3. Fragment docelowy (zielony)
+    ax.plot(full_time[input_end_idx:output_end_idx],
+            full_values[input_end_idx:output_end_idx],
+            'g-', linewidth=2.5, label=f'Wartości rzeczywiste (T_out={T_out})')
+
+    # 4. Przedziały ufności
+    ax.fill_between(
+        time_prediction,
+        mu_values - 2 * sigma_values,
+        mu_values + 2 * sigma_values,
+        alpha=0.2, color='red', label='±2σ (95.45% CI)'
+    )
+    ax.fill_between(
+        time_prediction,
+        mu_values - sigma_values,
+        mu_values + sigma_values,
+        alpha=0.3, color='red', label='±1σ (68.27% CI)'
+    )
+
+    # 5. Predykcja (czerwona, przerywana)
+    ax.plot(time_prediction, mu_values, 'r--', linewidth=2.5, label='Predykcja (μ)')
+
+    # 6. Linie pionowe oznaczające granice
+    ax.axvline(x=full_time[input_start_idx], color='blue', linestyle=':', linewidth=1.5, alpha=0.7)
+    ax.axvline(x=full_time[input_end_idx], color='orange', linestyle='--', linewidth=2, alpha=0.8,
+               label='Granica input/output')
+    if output_end_idx < len(full_time):
+        ax.axvline(x=full_time[output_end_idx], color='green', linestyle=':', linewidth=1.5, alpha=0.7)
+
+    # 7. Zaznaczenie obszaru predykcji (tło)
+    ax.axvspan(full_time[input_end_idx], full_time[min(output_end_idx, len(full_time)-1)],
+               alpha=0.1, color='yellow', label='Horyzont predykcji')
+
+    # Formatowanie
+    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_ylabel(feature_name, fontsize=12)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    if title:
+        ax.set_title(title, fontsize=14)
+    else:
+        ax.set_title(f'Pełna trajektoria z predykcją - {feature_name}', fontsize=14)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+    return fig
+
+
 def plot_calibration_diagram(
     expected_coverage: List[float],
     actual_coverage: List[float],

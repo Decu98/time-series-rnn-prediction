@@ -52,6 +52,7 @@ from src.evaluation.visualization import (
     plot_phase_space,
     plot_prediction_comparison,
     plot_uncertainty_evolution,
+    plot_full_trajectory_with_prediction,
 )
 from src.training.manual_trainer import ManualTrainer, create_manual_trainer
 
@@ -938,9 +939,71 @@ def visualize_results(
     time_input = np.arange(0, T_in * dt, dt)
     time_output = np.arange(T_in * dt, (T_in + T_out) * dt, dt)
 
-    # 1. Predykcja położenia z niepewnością
-    print("  - Wykres predykcji położenia...")
-    fig1 = plot_prediction_with_uncertainty(
+    import matplotlib.pyplot as plt
+
+    # Wybór losowej pełnej trajektorii z datasetu do wizualizacji
+    traj_idx = np.random.randint(0, dataset['trajectories'].shape[0])
+    full_trajectory = dataset['trajectories'][traj_idx]  # (num_steps, 2)
+    full_time = dataset['time']
+
+    # Denormalizacja pełnej trajektorii (jeśli była normalizowana)
+    full_trajectory_denorm = preprocessor.inverse_transform(full_trajectory)
+
+    # Losowy punkt startowy dla okna predykcji
+    max_start = len(full_time) - T_in - T_out
+    input_start_idx = np.random.randint(0, max(1, max_start))
+
+    # Przygotowanie danych do predykcji na pełnej trajektorii
+    input_window = full_trajectory[input_start_idx:input_start_idx + T_in]
+    input_window_norm = preprocessor.transform(input_window)
+    input_tensor = torch.FloatTensor(input_window_norm).unsqueeze(0).to(device)
+
+    # Predykcja dla pełnej trajektorii
+    with torch.no_grad():
+        mu_full, sigma_full = model(input_tensor, teacher_forcing_ratio=0.0)
+        mu_full = mu_full.cpu().numpy()[0]
+        sigma_full = sigma_full.cpu().numpy()[0]
+
+    # Denormalizacja predykcji
+    mu_full_denorm, sigma_full_denorm = preprocessor.inverse_transform_gaussian(mu_full, sigma_full)
+
+    # 1. Pełna trajektoria - położenie
+    print("  - Wykres pełnej trajektorii (położenie)...")
+    fig1 = plot_full_trajectory_with_prediction(
+        full_trajectory=full_trajectory_denorm,
+        full_time=full_time,
+        input_start_idx=input_start_idx,
+        T_in=T_in,
+        T_out=T_out,
+        mu_seq=mu_full_denorm,
+        sigma_seq=sigma_full_denorm,
+        feature_idx=0,
+        feature_name='Położenie x [m]',
+        title=f'Pełna trajektoria #{traj_idx} z predykcją położenia',
+        save_path=str(plots_dir / 'full_trajectory_position.png')
+    )
+    plt.close(fig1)
+
+    # 2. Pełna trajektoria - prędkość
+    print("  - Wykres pełnej trajektorii (prędkość)...")
+    fig2 = plot_full_trajectory_with_prediction(
+        full_trajectory=full_trajectory_denorm,
+        full_time=full_time,
+        input_start_idx=input_start_idx,
+        T_in=T_in,
+        T_out=T_out,
+        mu_seq=mu_full_denorm,
+        sigma_seq=sigma_full_denorm,
+        feature_idx=1,
+        feature_name='Prędkość v [m/s]',
+        title=f'Pełna trajektoria #{traj_idx} z predykcją prędkości',
+        save_path=str(plots_dir / 'full_trajectory_velocity.png')
+    )
+    plt.close(fig2)
+
+    # 3. Predykcja położenia z niepewnością (zoom na fragment)
+    print("  - Wykres predykcji położenia (zoom)...")
+    fig3 = plot_prediction_with_uncertainty(
         time_input=time_input,
         time_output=time_output,
         input_seq=input_denorm,
@@ -949,15 +1012,14 @@ def visualize_results(
         sigma_seq=sigma_denorm,
         feature_idx=0,
         feature_name='Położenie x [m]',
-        title='Predykcja położenia z przedziałami ufności',
-        save_path=str(plots_dir / 'prediction_position.png')
+        title='Predykcja położenia z przedziałami ufności (zoom)',
+        save_path=str(plots_dir / 'prediction_position_zoom.png')
     )
-    import matplotlib.pyplot as plt
-    plt.close(fig1)
+    plt.close(fig3)
 
-    # 2. Predykcja prędkości z niepewnością
-    print("  - Wykres predykcji prędkości...")
-    fig2 = plot_prediction_with_uncertainty(
+    # 4. Predykcja prędkości z niepewnością (zoom na fragment)
+    print("  - Wykres predykcji prędkości (zoom)...")
+    fig4 = plot_prediction_with_uncertainty(
         time_input=time_input,
         time_output=time_output,
         input_seq=input_denorm,
@@ -966,14 +1028,14 @@ def visualize_results(
         sigma_seq=sigma_denorm,
         feature_idx=1,
         feature_name='Prędkość v [m/s]',
-        title='Predykcja prędkości z przedziałami ufności',
-        save_path=str(plots_dir / 'prediction_velocity.png')
+        title='Predykcja prędkości z przedziałami ufności (zoom)',
+        save_path=str(plots_dir / 'prediction_velocity_zoom.png')
     )
-    plt.close(fig2)
+    plt.close(fig4)
 
-    # 3. Porównanie obu cech
+    # 5. Porównanie obu cech
     print("  - Wykres porównania cech...")
-    fig3 = plot_prediction_comparison(
+    fig5 = plot_prediction_comparison(
         time=time_output,
         target=target_denorm,
         mu=mu_denorm,
@@ -981,32 +1043,32 @@ def visualize_results(
         title='Porównanie predykcji',
         save_path=str(plots_dir / 'prediction_comparison.png')
     )
-    plt.close(fig3)
+    plt.close(fig5)
 
-    # 4. Ewolucja niepewności
+    # 6. Ewolucja niepewności
     print("  - Wykres ewolucji niepewności...")
-    fig4 = plot_uncertainty_evolution(
+    fig6 = plot_uncertainty_evolution(
         time=time_output,
         sigma=sigma_denorm,
         title='Ewolucja niepewności w czasie',
         save_path=str(plots_dir / 'uncertainty_evolution.png')
     )
-    plt.close(fig4)
+    plt.close(fig6)
 
-    # 5. Portret fazowy
+    # 7. Portret fazowy
     print("  - Portret fazowy...")
     full_input = np.vstack([input_denorm, target_denorm])
     full_pred = np.vstack([input_denorm, mu_denorm])
 
-    fig5 = plot_phase_space(
+    fig7 = plot_phase_space(
         trajectories=[full_input, full_pred],
         labels=['Rzeczywista', 'Predykcja'],
         title='Portret fazowy - porównanie trajektorii',
         save_path=str(plots_dir / 'phase_space.png')
     )
-    plt.close(fig5)
+    plt.close(fig7)
 
-    # 6. Krzywe uczenia (jeśli dostępne logi)
+    # 8. Krzywe uczenia (jeśli dostępne logi)
     logs_dir = output_dir / 'logs'
     if logs_dir.exists():
         # Szukanie pliku metrics.csv
@@ -1026,13 +1088,13 @@ def visualize_results(
                 val_losses = val_losses[:min_len]
 
                 if len(train_losses) > 0:
-                    fig6 = plot_training_curves(
+                    fig8 = plot_training_curves(
                         train_losses=train_losses,
                         val_losses=val_losses,
                         title='Krzywe uczenia',
                         save_path=str(plots_dir / 'training_curves.png')
                     )
-                    plt.close(fig6)
+                    plt.close(fig8)
 
     print(f"\nWykresy zapisane w: {plots_dir}")
 
