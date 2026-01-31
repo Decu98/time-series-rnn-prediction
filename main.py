@@ -180,8 +180,14 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '--teacher-forcing-ratio',
         type=float,
-        default=1.0,
-        help='Początkowy współczynnik teacher forcing'
+        default=0.5,
+        help='Początkowy współczynnik teacher forcing (0.5 = 50%% szans na użycie prawdziwej wartości)'
+    )
+    parser.add_argument(
+        '--teacher-forcing-decay',
+        type=float,
+        default=0.05,
+        help='Spadek teacher forcing na epokę (szybszy decay = lepsza generalizacja)'
     )
     parser.add_argument(
         '--gradient-clip',
@@ -482,6 +488,7 @@ def create_model(args: argparse.Namespace) -> Seq2SeqModel:
         dropout=args.dropout,
         learning_rate=args.learning_rate,
         teacher_forcing_ratio=args.teacher_forcing_ratio,
+        teacher_forcing_decay=args.teacher_forcing_decay,
         gradient_clip_val=args.gradient_clip
     )
 
