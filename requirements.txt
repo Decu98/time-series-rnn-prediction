@@ -1,0 +1,22 @@
+# Główne zależności projektu - Predykcja szeregów czasowych
+# Model RNN (LSTM) z wyjściem probabilistycznym
+
+# Deep Learning
+torch>=2.0.0
+pytorch-lightning>=2.0.0
+
+# Obliczenia numeryczne
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Wizualizacja
+matplotlib>=3.7.0
+
+# Analiza danych (do odczytu logów treningowych)
+pandas>=2.0.0
+
+# Pasek postępu
+tqdm>=4.65.0
+
+# Opcjonalne - optymalizacja hiperparametrów
+# optuna>=3.0.0

@@ -1,0 +1,75 @@
+# Środowisko wirtualne
+.venv/
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyTorch / modele
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+models/saved/
+
+# Dane
+data/
+*.csv
+*.npy
+*.npz
+*.h5
+*.hdf5
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# System
+.DS_Store
+Thumbs.db
+
+# Logi i wyniki
+logs/
+runs/
+outputs/
+results/
+*.log
+
+# Optuna
+*.db
+
+# Testy
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Inne
+*.bak
+*.tmp
