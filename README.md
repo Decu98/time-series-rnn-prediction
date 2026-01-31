@@ -205,16 +205,53 @@ class TrainingConfig:
 
 ## Urządzenia obliczeniowe
 
-Skrypt automatycznie wykrywa dostępne urządzenie:
-- **CUDA** (GPU NVIDIA)
-- **MPS** (Apple Silicon)
-- **CPU**
+Program automatycznie wykrywa i wykorzystuje dostępny akcelerator:
 
-Można wymusić konkretne urządzenie:
+| Platforma | Akcelerator | Wymagania |
+|-----------|-------------|-----------|
+| **NVIDIA GPU** | CUDA | Sterowniki NVIDIA + CUDA Toolkit |
+| **AMD GPU** | ROCm | PyTorch z ROCm (Linux) |
+| **Apple Silicon** | MPS | macOS 12.3+ z PyTorch 1.12+ |
+| **CPU** | - | Zawsze dostępne (fallback) |
+
+### Automatyczne wykrywanie (domyślne)
+```bash
+python main.py --mode train --device auto
+```
+
+### Wymuszenie konkretnego urządzenia
 ```bash
 python main.py --mode train --device cpu
-python main.py --mode train --device cuda
-python main.py --mode train --device mps
+python main.py --mode train --device cuda  # NVIDIA / AMD ROCm
+python main.py --mode train --device mps   # Apple Silicon
+```
+
+### Sprawdzenie dostępnych urządzeń
+```python
+from config.config import print_device_info
+print_device_info()
+```
+
+### Instalacja PyTorch dla różnych platform
+
+**NVIDIA (CUDA):**
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+```
+
+**AMD (ROCm) - tylko Linux:**
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.0
+```
+
+**Apple Silicon (MPS):**
+```bash
+pip install torch torchvision  # MPS jest domyślnie wspierany
+```
+
+**CPU:**
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ## Rozwiązywanie problemów

@@ -6,10 +6,17 @@ Zawiera dataclassy z hiperparametrami dla:
 - preprocessingu
 - architektury modelu
 - procesu treningowego
+
+Obsługiwane platformy GPU:
+- NVIDIA (CUDA)
+- AMD (ROCm)
+- Apple Silicon (MPS)
 """
 
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
+
+import torch
 
 
 @dataclass
@@ -169,3 +176,117 @@ def get_default_config() -> Config:
         Config: Obiekt konfiguracji z domyślnymi wartościami
     """
     return Config()
+
+
+def get_device(preferred: str = "auto") -> torch.device:
+    """
+    Wykrywa i zwraca optymalne urządzenie obliczeniowe.
+
+    Obsługuje:
+    - NVIDIA GPU (CUDA)
+    - AMD GPU (ROCm - kompatybilne z CUDA API)
+    - Apple Silicon (MPS)
+    - CPU jako fallback
+
+    Args:
+        preferred: Preferowane urządzenie ('auto', 'cpu', 'cuda', 'mps')
+
+    Returns:
+        torch.device: Wykryte urządzenie
+    """
+    if preferred == "cpu":
+        return torch.device("cpu")
+
+    if preferred == "cuda":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        print("UWAGA: CUDA niedostępne, używam CPU")
+        return torch.device("cpu")
+
+    if preferred == "mps":
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            if torch.backends.mps.is_built():
+                return torch.device("mps")
+        print("UWAGA: MPS niedostępne, używam CPU")
+        return torch.device("cpu")
+
+    # Auto-detekcja (preferred == "auto")
+    # Priorytet: CUDA (NVIDIA/AMD ROCm) > MPS (Apple) > CPU
+    if torch.cuda.is_available():
+        device_name = torch.cuda.get_device_name(0)
+        print(f"Wykryto GPU: {device_name}")
+        return torch.device("cuda")
+
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        if torch.backends.mps.is_built():
+            print("Wykryto Apple Silicon (MPS)")
+            return torch.device("mps")
+
+    print("Brak GPU, używam CPU")
+    return torch.device("cpu")
+
+
+def get_accelerator_config(preferred: str = "auto") -> dict:
+    """
+    Zwraca konfigurację akceleratora dla PyTorch Lightning.
+
+    Args:
+        preferred: Preferowane urządzenie ('auto', 'cpu', 'cuda', 'mps')
+
+    Returns:
+        dict: Słownik z kluczami 'accelerator' i 'devices' dla pl.Trainer
+    """
+    if preferred == "cpu":
+        return {"accelerator": "cpu", "devices": 1}
+
+    if preferred == "cuda":
+        if torch.cuda.is_available():
+            return {"accelerator": "gpu", "devices": 1}
+        return {"accelerator": "cpu", "devices": 1}
+
+    if preferred == "mps":
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return {"accelerator": "mps", "devices": 1}
+        return {"accelerator": "cpu", "devices": 1}
+
+    # Auto-detekcja
+    if torch.cuda.is_available():
+        return {"accelerator": "gpu", "devices": 1}
+
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        if torch.backends.mps.is_built():
+            return {"accelerator": "mps", "devices": 1}
+
+    return {"accelerator": "cpu", "devices": 1}
+
+
+def print_device_info() -> None:
+    """
+    Wyświetla informacje o dostępnych urządzeniach obliczeniowych.
+    """
+    print("\n" + "=" * 50)
+    print("INFORMACJE O URZĄDZENIACH OBLICZENIOWYCH")
+    print("=" * 50)
+
+    print(f"\nPyTorch wersja: {torch.__version__}")
+
+    # CUDA (NVIDIA / AMD ROCm)
+    print(f"\nCUDA dostępne: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"  - Wersja CUDA: {torch.version.cuda}")
+        print(f"  - Liczba GPU: {torch.cuda.device_count()}")
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            memory_gb = props.total_memory / (1024**3)
+            print(f"  - GPU {i}: {props.name} ({memory_gb:.1f} GB)")
+
+    # MPS (Apple Silicon)
+    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    mps_built = hasattr(torch.backends, "mps") and torch.backends.mps.is_built()
+    print(f"\nMPS (Apple Silicon) dostępne: {mps_available}")
+    print(f"MPS zbudowane: {mps_built}")
+
+    # Rekomendacja
+    device = get_device("auto")
+    print(f"\nRekomendowane urządzenie: {device}")
+    print("=" * 50 + "\n")

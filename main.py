@@ -33,7 +33,13 @@ from pytorch_lightning.callbacks import (
 from pytorch_lightning.loggers import CSVLogger
 
 # Import modułów projektu
-from config.config import Config, get_default_config
+from config.config import (
+    Config,
+    get_default_config,
+    get_device,
+    get_accelerator_config,
+    print_device_info,
+)
 from src.data_generation.synthetic import generate_dataset, save_dataset, load_dataset
 from src.preprocessing.preprocessor import DataPreprocessor
 from src.dataset.time_series_dataset import TimeSeriesDataModule
@@ -229,23 +235,20 @@ def get_accelerator(device: str) -> str:
     """
     Określa akcelerator dla PyTorch Lightning.
 
+    Obsługiwane platformy:
+    - NVIDIA GPU (CUDA)
+    - AMD GPU (ROCm - używa CUDA API)
+    - Apple Silicon (MPS)
+    - CPU
+
     Args:
         device: Wybrane urządzenie ('auto', 'cpu', 'cuda', 'mps')
 
     Returns:
-        Nazwa akceleratora
+        Nazwa akceleratora dla pl.Trainer
     """
-    if device == 'auto':
-        if torch.cuda.is_available():
-            return 'gpu'
-        elif torch.backends.mps.is_available():
-            return 'mps'
-        else:
-            return 'cpu'
-    elif device == 'cuda':
-        return 'gpu'
-    else:
-        return device
+    config = get_accelerator_config(device)
+    return config["accelerator"]
 
 
 def generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
@@ -925,8 +928,12 @@ def main() -> None:
     print("PREDYKCJA SZEREGÓW CZASOWYCH - MODEL SEQ2SEQ LSTM")
     print("=" * 60)
     print(f"\nTryb: {args.mode.upper()}")
-    print(f"Urządzenie: {args.device}")
     print(f"Seed: {args.seed}")
+
+    # Informacje o urządzeniu (obsługa NVIDIA/AMD/Apple Silicon)
+    print_device_info()
+    device = get_device(args.device)
+    print(f"Wybrane urządzenie: {device}")
 
     # Wykonanie odpowiedniego trybu
     if args.mode == 'generate':
