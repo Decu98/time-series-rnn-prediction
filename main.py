@@ -947,7 +947,9 @@ def predict(args: argparse.Namespace) -> None:
 
     # Ładowanie modelu
     print(f"\nŁadowanie modelu z: {args.checkpoint}")
+    device = get_device(args.device)
     model = Seq2SeqModel.load_from_checkpoint(args.checkpoint)
+    model = model.to(device)
     model.eval()
 
     # Generowanie pojedynczej trajektorii testowej
@@ -978,17 +980,17 @@ def predict(args: argparse.Namespace) -> None:
     input_seq = trajectory_norm[start_idx:start_idx + args.T_in]
     target_seq = trajectory_norm[start_idx + args.T_in:start_idx + args.T_in + args.T_out]
 
-    # Konwersja do tensora
-    input_tensor = torch.FloatTensor(input_seq).unsqueeze(0)
+    # Konwersja do tensora i przeniesienie na GPU
+    input_tensor = torch.FloatTensor(input_seq).unsqueeze(0).to(device)
 
     # Predykcja
     print("\nWykonywanie predykcji...")
     with torch.no_grad():
         predictions = model.predict_trajectory(input_tensor, num_samples=100)
 
-    mu = predictions['mu'].numpy()
-    sigma = predictions['sigma'].numpy()
-    samples = predictions['samples'].numpy()
+    mu = predictions['mu'].cpu().numpy()
+    sigma = predictions['sigma'].cpu().numpy()
+    samples = predictions['samples'].cpu().numpy()
 
     # Denormalizacja
     input_denorm = preprocessor.inverse_transform(input_seq)
