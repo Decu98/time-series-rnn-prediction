@@ -251,9 +251,10 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6
 ```bash
 pip install torch torchvision
 pip install torch-directml
+python main.py --mode train --device directml
 ```
-> **Uwaga:** DirectML wymaga ręcznej pętli treningowej - PyTorch Lightning nie wspiera DirectML.
-> Dla pełnej integracji z Lightning na Windows z AMD, rozważ użycie CPU.
+> **Uwaga:** Program automatycznie używa ręcznej pętli treningowej dla DirectML
+> (PyTorch Lightning nie wspiera DirectML). Funkcjonalność jest identyczna.
 
 **Apple Silicon (MPS) - macOS:**
 ```bash
