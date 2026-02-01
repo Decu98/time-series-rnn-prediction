@@ -54,7 +54,6 @@ from src.evaluation.visualization import (
     plot_uncertainty_evolution,
     plot_full_trajectory_with_prediction,
 )
-from src.training.manual_trainer import ManualTrainer, create_manual_trainer
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -554,92 +553,9 @@ def create_trainer(args: argparse.Namespace, output_dir: Path) -> pl.Trainer:
     return trainer
 
 
-def should_use_manual_trainer(device_arg: str) -> bool:
-    """
-    Sprawdza czy należy użyć ręcznej pętli treningowej.
-
-    DirectML nie jest wspierany przez PyTorch Lightning,
-    więc dla DirectML zawsze używamy ManualTrainer.
-
-    Args:
-        device_arg: Argument --device z wiersza poleceń
-
-    Returns:
-        True jeśli należy użyć ManualTrainer
-    """
-    if device_arg == "directml":
-        return True
-
-    # Auto-detekcja: jeśli DirectML jest jedynym dostępnym GPU
-    if device_arg == "auto":
-        import platform
-        if platform.system() == "Windows":
-            if not torch.cuda.is_available() and is_directml_available():
-                return True
-
-    return False
-
-
-def train_with_manual_trainer(
-    args: argparse.Namespace,
-    output_dir: Path,
-    dataset: Dict[str, np.ndarray],
-    preprocessor: DataPreprocessor,
-    datamodule: TimeSeriesDataModule,
-    model: Seq2SeqModel,
-    device: torch.device
-) -> None:
-    """
-    Trening z użyciem ręcznej pętli (dla DirectML).
-
-    Args:
-        args: Argumenty wiersza poleceń
-        output_dir: Katalog wyjściowy
-        dataset: Dane
-        preprocessor: Preprocessor
-        datamodule: DataModule
-        model: Model do trenowania
-        device: Urządzenie obliczeniowe
-    """
-    # Tworzenie ręcznego trenera
-    trainer = create_manual_trainer(
-        model=model,
-        device=device,
-        output_dir=output_dir,
-        learning_rate=args.learning_rate,
-        gradient_clip_val=args.gradient_clip,
-        early_stopping_patience=args.early_stopping_patience,
-    )
-
-    # Trening
-    trainer.fit(
-        train_loader=datamodule.train_dataloader(),
-        val_loader=datamodule.val_dataloader(),
-        max_epochs=args.max_epochs,
-        teacher_forcing_ratio=args.teacher_forcing_ratio,
-        teacher_forcing_decay=0.02,
-    )
-
-    # Test
-    print("\nEwaluacja na zbiorze testowym...")
-    trainer.test(datamodule.test_dataloader())
-
-    # Wizualizacja
-    visualize_results(
-        model=model,
-        datamodule=datamodule,
-        preprocessor=preprocessor,
-        output_dir=output_dir,
-        dataset=dataset
-    )
-
-
 def train(args: argparse.Namespace) -> None:
     """
-    Przeprowadza trening modelu.
-
-    Automatycznie wybiera między PyTorch Lightning (CUDA, MPS)
-    a ręczną pętlą treningową (DirectML dla AMD na Windows).
+    Przeprowadza trening modelu z użyciem PyTorch Lightning.
 
     Args:
         args: Argumenty wiersza poleceń
@@ -650,11 +566,6 @@ def train(args: argparse.Namespace) -> None:
 
     # Ustawienie ziarna
     setup_seed(args.seed)
-
-    # Sprawdzenie czy używamy DirectML
-    use_manual = should_use_manual_trainer(args.device)
-    if use_manual:
-        print("\n[INFO] Wykryto DirectML - używam ręcznej pętli treningowej")
 
     # Tworzenie katalogu wyjściowego
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -697,44 +608,30 @@ def train(args: argparse.Namespace) -> None:
     params = model.get_num_parameters()
     print(f"  - Parametry: {params['total']:,} (trenowalnych: {params['trainable']:,})")
 
-    # Wybór trenera
-    if use_manual:
-        # Ręczna pętla dla DirectML
-        device = get_device(args.device)
-        train_with_manual_trainer(
-            args=args,
-            output_dir=output_dir,
-            dataset=dataset,
-            preprocessor=preprocessor,
-            datamodule=datamodule,
-            model=model,
-            device=device
-        )
-    else:
-        # PyTorch Lightning dla CUDA/MPS/CPU
-        trainer = create_trainer(args, output_dir)
+    # PyTorch Lightning trainer
+    trainer = create_trainer(args, output_dir)
 
-        # Trening
-        print("\nRozpoczęcie treningu...")
-        print("-" * 40)
+    # Trening
+    print("\nRozpoczęcie treningu...")
+    print("-" * 40)
 
-        trainer.fit(model, datamodule)
+    trainer.fit(model, datamodule)
 
-        print("-" * 40)
-        print("Trening zakończony!")
+    print("-" * 40)
+    print("Trening zakończony!")
 
-        # Test na zbiorze testowym
-        print("\nEwaluacja na zbiorze testowym...")
-        test_results = trainer.test(model, datamodule)
+    # Test na zbiorze testowym
+    print("\nEwaluacja na zbiorze testowym...")
+    test_results = trainer.test(model, datamodule)
 
-        # Wizualizacja
-        visualize_results(
-            model=model,
-            datamodule=datamodule,
-            preprocessor=preprocessor,
-            output_dir=output_dir,
-            dataset=dataset
-        )
+    # Wizualizacja
+    visualize_results(
+        model=model,
+        datamodule=datamodule,
+        preprocessor=preprocessor,
+        output_dir=output_dir,
+        dataset=dataset
+    )
 
     # Zapis wyników
     print(f"\nWyniki zapisane w: {output_dir}")
@@ -953,8 +850,8 @@ def visualize_results(
     full_trajectory = dataset['trajectories'][traj_idx]  # (num_steps, 2)
     full_time = dataset['time']
 
-    # Denormalizacja pełnej trajektorii (jeśli była normalizowana)
-    full_trajectory_denorm = preprocessor.inverse_transform(full_trajectory)
+    # Trajektoria z datasetu jest już w oryginalnych jednostkach (nie znormalizowana)
+    full_trajectory_denorm = full_trajectory
 
     # Losowy punkt startowy dla okna predykcji
     max_start = len(full_time) - T_in - T_out
