@@ -1075,19 +1075,268 @@ def visualize_results(
     print(f"\nWykresy zapisane w: {plots_dir}")
 
 
+def run_prediction_for_oscillator(
+    model: Seq2SeqModel,
+    preprocessor: DataPreprocessor,
+    device: torch.device,
+    output_dir: Path,
+    oscillator_params: Dict,
+    t: np.ndarray,
+    T_in: int,
+    T_out: int,
+    num_predictions: int,
+    recursive_steps: int,
+    oscillator_type: str = 'damped'
+) -> None:
+    """
+    Wykonuje predykcje dla pojedynczego typu oscylatora.
+
+    Args:
+        model: Model do predykcji
+        preprocessor: Preprocessor danych
+        device: Urządzenie (CPU/GPU)
+        output_dir: Katalog wyjściowy
+        oscillator_params: Parametry oscylatora
+        t: Wektor czasu
+        T_in: Długość okna wejściowego
+        T_out: Długość horyzontu predykcji
+        num_predictions: Liczba predykcji
+        recursive_steps: Liczba kroków rekurencyjnych
+        oscillator_type: Typ oscylatora ('damped' lub 'undamped')
+    """
+    import matplotlib.pyplot as plt
+    from src.data_generation.synthetic import DampedOscillator, SimpleHarmonicOscillator
+
+    dt = t[1] - t[0]
+
+    # Tworzenie oscylatora
+    if oscillator_type == 'undamped':
+        oscillator = SimpleHarmonicOscillator(
+            mass=oscillator_params['mass'],
+            stiffness=oscillator_params['stiffness']
+        )
+        oscillator_params['damping'] = 0.0
+        type_label = 'BEZ TŁUMIENIA'
+    else:
+        oscillator = DampedOscillator(
+            mass=oscillator_params['mass'],
+            damping=oscillator_params['damping'],
+            stiffness=oscillator_params['stiffness']
+        )
+        type_label = 'TŁUMIONY'
+
+    oscillator_params['type'] = oscillator_type
+
+    # Generowanie trajektorii
+    x, v = oscillator.generate_trajectory(
+        x0=oscillator_params['x0'],
+        v0=oscillator_params['v0'],
+        t=t
+    )
+    trajectory = np.column_stack([x, v])
+
+    # Normalizacja
+    trajectory_norm = preprocessor.transform(trajectory)
+
+    # Sprawdzenie długości
+    max_start = len(t) - T_in - T_out
+    if max_start <= 0:
+        print(f"  BŁĄD: Trajektoria zbyt krótka dla T_in={T_in}, T_out={T_out}")
+        return
+
+    # Równomierne rozmieszczenie punktów predykcji
+    start_indices = np.linspace(0, max_start, num_predictions, dtype=int)
+
+    print(f"\n  Wykonywanie {num_predictions} predykcji ({type_label})...")
+
+    predictions_list = []
+    for i, start_idx in enumerate(start_indices):
+        input_seq = trajectory_norm[start_idx:start_idx + T_in]
+        input_tensor = torch.FloatTensor(input_seq).unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            pred = model.predict_trajectory(input_tensor, num_samples=50)
+
+        mu = pred['mu'].cpu().numpy()
+        sigma = pred['sigma'].cpu().numpy()
+        mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu, sigma)
+
+        predictions_list.append({
+            'start_idx': start_idx,
+            'mu': mu_denorm,
+            'sigma': sigma_denorm
+        })
+
+        print(f"    Predykcja {i+1}/{num_predictions}: t_start={t[start_idx]:.2f}s")
+
+    # Wizualizacja - pełne wykresy
+    print(f"  Generowanie wizualizacji ({type_label})...")
+
+    fig1 = plot_multi_prediction_trajectory(
+        full_trajectory=trajectory,
+        full_time=t,
+        predictions=predictions_list,
+        T_in=T_in,
+        T_out=T_out,
+        feature_idx=0,
+        feature_name='Położenie x [m]',
+        title=f'Predykcje położenia - {type_label} ({num_predictions} punktów)',
+        save_path=str(output_dir / 'multi_prediction_position.png'),
+        oscillator_params=oscillator_params
+    )
+    plt.close(fig1)
+
+    fig2 = plot_multi_prediction_trajectory(
+        full_trajectory=trajectory,
+        full_time=t,
+        predictions=predictions_list,
+        T_in=T_in,
+        T_out=T_out,
+        feature_idx=1,
+        feature_name='Prędkość v [m/s]',
+        title=f'Predykcje prędkości - {type_label} ({num_predictions} punktów)',
+        save_path=str(output_dir / 'multi_prediction_velocity.png'),
+        oscillator_params=oscillator_params
+    )
+    plt.close(fig2)
+
+    # Zoomy
+    zooms_dir = output_dir / 'zooms'
+    zooms_dir.mkdir(exist_ok=True)
+
+    for i, pred in enumerate(predictions_list):
+        start_idx = pred['start_idx']
+        mu = pred['mu']
+        sigma = pred['sigma']
+
+        time_input = t[start_idx:start_idx + T_in]
+        time_output = t[start_idx + T_in:start_idx + T_in + T_out]
+        input_seq = trajectory[start_idx:start_idx + T_in]
+        target_seq = trajectory[start_idx + T_in:start_idx + T_in + T_out]
+
+        fig_zoom_x = plot_prediction_with_uncertainty(
+            time_input=time_input,
+            time_output=time_output,
+            input_seq=input_seq,
+            target_seq=target_seq,
+            mu_seq=mu,
+            sigma_seq=sigma,
+            feature_idx=0,
+            feature_name='Położenie x [m]',
+            title=f'Predykcja #{i+1} - położenie (t={t[start_idx]:.1f}s)',
+            save_path=str(zooms_dir / f'zoom_{i+1}_position.png')
+        )
+        plt.close(fig_zoom_x)
+
+        fig_zoom_v = plot_prediction_with_uncertainty(
+            time_input=time_input,
+            time_output=time_output,
+            input_seq=input_seq,
+            target_seq=target_seq,
+            mu_seq=mu,
+            sigma_seq=sigma,
+            feature_idx=1,
+            feature_name='Prędkość v [m/s]',
+            title=f'Predykcja #{i+1} - prędkość (t={t[start_idx]:.1f}s)',
+            save_path=str(zooms_dir / f'zoom_{i+1}_velocity.png')
+        )
+        plt.close(fig_zoom_v)
+
+    # Predykcja rekurencyjna
+    if recursive_steps > 0:
+        print(f"  Predykcja rekurencyjna ({recursive_steps} kroków)...")
+
+        recursive_dir = output_dir / 'recursive'
+        recursive_dir.mkdir(exist_ok=True)
+
+        initial_input = trajectory[:T_in]
+        initial_input_norm = trajectory_norm[:T_in]
+
+        recursive_predictions = []
+        current_input_norm = initial_input_norm.copy()
+
+        for step in range(recursive_steps):
+            input_tensor = torch.FloatTensor(current_input_norm).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                pred = model.predict_trajectory(input_tensor, num_samples=50)
+
+            mu_norm = pred['mu'].cpu().numpy()
+            sigma_norm = pred['sigma'].cpu().numpy()
+            mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu_norm, sigma_norm)
+
+            recursive_predictions.append({
+                'mu': mu_denorm,
+                'sigma': sigma_denorm,
+                'mu_norm': mu_norm,
+                'time_start': (T_in + step * T_out) * dt
+            })
+
+            print(f"    Krok {step+1}/{recursive_steps}: t={recursive_predictions[-1]['time_start']:.1f}s")
+
+            if T_out >= T_in:
+                current_input_norm = mu_norm[-T_in:]
+            else:
+                overlap = T_in - T_out
+                current_input_norm = np.concatenate([
+                    current_input_norm[-overlap:],
+                    mu_norm
+                ], axis=0)
+
+        fig_rec_x = plot_recursive_prediction(
+            full_trajectory=trajectory,
+            full_time=t,
+            initial_input=initial_input,
+            recursive_predictions=recursive_predictions,
+            T_in=T_in,
+            T_out=T_out,
+            feature_idx=0,
+            feature_name='Położenie x [m]',
+            title=f'Predykcja rekurencyjna - {type_label} ({recursive_steps} kroków)',
+            save_path=str(recursive_dir / 'recursive_position.png'),
+            oscillator_params=oscillator_params
+        )
+        plt.close(fig_rec_x)
+
+        fig_rec_v = plot_recursive_prediction(
+            full_trajectory=trajectory,
+            full_time=t,
+            initial_input=initial_input,
+            recursive_predictions=recursive_predictions,
+            T_in=T_in,
+            T_out=T_out,
+            feature_idx=1,
+            feature_name='Prędkość v [m/s]',
+            title=f'Predykcja rekurencyjna - {type_label} ({recursive_steps} kroków)',
+            save_path=str(recursive_dir / 'recursive_velocity.png'),
+            oscillator_params=oscillator_params
+        )
+        plt.close(fig_rec_v)
+
+    # Zapisanie parametrów
+    params_file = output_dir / 'parameters.txt'
+    with open(params_file, 'w', encoding='utf-8') as f:
+        f.write(f"Typ oscylatora: {type_label}\n")
+        f.write(f"T_in: {T_in}\n")
+        f.write(f"T_out: {T_out}\n")
+        f.write(f"dt: {dt}\n")
+        f.write(f"t_max: {t[-1]}\n")
+        f.write(f"num_predictions: {num_predictions}\n")
+        f.write(f"recursive_steps: {recursive_steps}\n")
+        f.write(f"\nParametry oscylatora:\n")
+        for k, v in oscillator_params.items():
+            f.write(f"  {k}: {v}\n")
+
+
 def predict(args: argparse.Namespace) -> None:
     """
-    Przeprowadza predykcję na losowej trajektorii syntetycznej.
+    Przeprowadza predykcję na trajektoriach syntetycznych.
 
-    Generuje losową trajektorię oscylatora tłumionego i wykonuje
-    wiele predykcji w różnych punktach czasowych.
+    Testuje model na obu typach oscylatorów: tłumionym i bez tłumienia.
 
     Args:
         args: Argumenty wiersza poleceń
     """
-    import matplotlib.pyplot as plt
-    from src.data_generation.synthetic import DampedOscillator
-
     print("\n" + "=" * 60)
     print("PREDYKCJA")
     print("=" * 60)
@@ -1132,17 +1381,21 @@ def predict(args: argparse.Namespace) -> None:
     else:
         print("UWAGA: Brak pliku preprocessora - używam domyślnej normalizacji")
 
-    # Generowanie losowej trajektorii z losowymi parametrami
-    print("\nGenerowanie losowej trajektorii...")
+    # Generowanie wektora czasu
+    dt = args.dt
+    t_max = args.t_max
+    t = np.arange(0, t_max, dt)
 
-    # Losowe parametry oscylatora (w sensownych zakresach)
+    print(f"Długość trajektorii: {len(t)} kroków ({t_max}s przy dt={dt}s)")
+
+    # Losowe parametry oscylatora (wspólne dla obu typów)
     mass = np.random.uniform(0.5, 2.0)
     damping = np.random.uniform(0.1, 0.8)
     stiffness = np.random.uniform(1.0, 5.0)
     x0 = np.random.uniform(-2.0, 2.0)
     v0 = np.random.uniform(-1.0, 1.0)
 
-    oscillator_params = {
+    base_params = {
         'mass': round(mass, 2),
         'damping': round(damping, 2),
         'stiffness': round(stiffness, 2),
@@ -1150,231 +1403,61 @@ def predict(args: argparse.Namespace) -> None:
         'v0': round(v0, 2)
     }
 
-    print(f"  Parametry oscylatora:")
-    print(f"    - masa (m): {oscillator_params['mass']}")
-    print(f"    - tłumienie (c): {oscillator_params['damping']}")
-    print(f"    - sztywność (k): {oscillator_params['stiffness']}")
-    print(f"    - x₀: {oscillator_params['x0']}")
-    print(f"    - v₀: {oscillator_params['v0']}")
+    print(f"\nParametry bazowe oscylatora:")
+    print(f"  - masa (m): {base_params['mass']}")
+    print(f"  - sztywność (k): {base_params['stiffness']}")
+    print(f"  - x₀: {base_params['x0']}")
+    print(f"  - v₀: {base_params['v0']}")
 
-    oscillator = DampedOscillator(mass=mass, damping=damping, stiffness=stiffness)
+    # Test dla oscylatora TŁUMIONEGO
+    print("\n" + "-" * 40)
+    print("OSCYLATOR TŁUMIONY")
+    print("-" * 40)
+    print(f"  - tłumienie (c): {base_params['damping']}")
 
-    # Generowanie trajektorii - wystarczająco długiej dla wielu predykcji
-    dt = args.dt
-    t_max = args.t_max
-    t = np.arange(0, t_max, dt)
-    x, v = oscillator.generate_trajectory(x0=x0, v0=v0, t=t)
-    trajectory = np.column_stack([x, v])
+    damped_dir = output_dir / 'damped'
+    damped_dir.mkdir(exist_ok=True)
 
-    print(f"  Długość trajektorii: {len(t)} kroków ({t_max}s przy dt={dt}s)")
-
-    # Normalizacja trajektorii
-    if preprocessor_path.exists():
-        trajectory_norm = preprocessor.transform(trajectory)
-    else:
-        # Fallback - dopasowanie do trajektorii
-        preprocessor.fit(trajectory[np.newaxis, :, :])
-        trajectory_norm = preprocessor.transform(trajectory)
-
-    # Wybór punktów startowych dla predykcji
-    num_predictions = args.num_predictions
-    max_start = len(t) - T_in - T_out
-
-    if max_start <= 0:
-        print(f"BŁĄD: Trajektoria zbyt krótka dla T_in={T_in}, T_out={T_out}")
-        sys.exit(1)
-
-    # Równomierne rozmieszczenie punktów predykcji
-    start_indices = np.linspace(0, max_start, num_predictions, dtype=int)
-
-    print(f"\nWykonywanie {num_predictions} predykcji...")
-
-    predictions_list = []
-    for i, start_idx in enumerate(start_indices):
-        # Przygotowanie danych wejściowych
-        input_seq = trajectory_norm[start_idx:start_idx + T_in]
-        input_tensor = torch.FloatTensor(input_seq).unsqueeze(0).to(device)
-
-        # Predykcja
-        with torch.no_grad():
-            pred = model.predict_trajectory(input_tensor, num_samples=50)
-
-        mu = pred['mu'].cpu().numpy()
-        sigma = pred['sigma'].cpu().numpy()
-
-        # Denormalizacja
-        mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu, sigma)
-
-        predictions_list.append({
-            'start_idx': start_idx,
-            'mu': mu_denorm,
-            'sigma': sigma_denorm
-        })
-
-        print(f"  Predykcja {i+1}/{num_predictions}: t_start={t[start_idx]:.2f}s")
-
-    # Wizualizacja - pełne wykresy
-    print("\nGenerowanie wizualizacji...")
-
-    fig1 = plot_multi_prediction_trajectory(
-        full_trajectory=trajectory,
-        full_time=t,
-        predictions=predictions_list,
+    damped_params = base_params.copy()
+    run_prediction_for_oscillator(
+        model=model,
+        preprocessor=preprocessor,
+        device=device,
+        output_dir=damped_dir,
+        oscillator_params=damped_params,
+        t=t,
         T_in=T_in,
         T_out=T_out,
-        feature_idx=0,
-        feature_name='Położenie x [m]',
-        title=f'Predykcje położenia ({num_predictions} punktów)',
-        save_path=str(output_dir / 'multi_prediction_position.png'),
-        oscillator_params=oscillator_params
+        num_predictions=args.num_predictions,
+        recursive_steps=args.recursive_steps,
+        oscillator_type='damped'
     )
-    plt.close(fig1)
 
-    fig2 = plot_multi_prediction_trajectory(
-        full_trajectory=trajectory,
-        full_time=t,
-        predictions=predictions_list,
+    # Test dla oscylatora BEZ TŁUMIENIA
+    print("\n" + "-" * 40)
+    print("OSCYLATOR BEZ TŁUMIENIA")
+    print("-" * 40)
+    print(f"  - tłumienie (c): 0.0")
+
+    undamped_dir = output_dir / 'undamped'
+    undamped_dir.mkdir(exist_ok=True)
+
+    undamped_params = base_params.copy()
+    run_prediction_for_oscillator(
+        model=model,
+        preprocessor=preprocessor,
+        device=device,
+        output_dir=undamped_dir,
+        oscillator_params=undamped_params,
+        t=t,
         T_in=T_in,
         T_out=T_out,
-        feature_idx=1,
-        feature_name='Prędkość v [m/s]',
-        title=f'Predykcje prędkości ({num_predictions} punktów)',
-        save_path=str(output_dir / 'multi_prediction_velocity.png'),
-        oscillator_params=oscillator_params
+        num_predictions=args.num_predictions,
+        recursive_steps=args.recursive_steps,
+        oscillator_type='undamped'
     )
-    plt.close(fig2)
 
-    # Zoomy dla poszczególnych predykcji
-    zooms_dir = output_dir / 'zooms'
-    zooms_dir.mkdir(exist_ok=True)
-    print(f"  Generowanie {num_predictions} zoomów...")
-
-    for i, pred in enumerate(predictions_list):
-        start_idx = pred['start_idx']
-        mu = pred['mu']
-        sigma = pred['sigma']
-
-        # Wektory czasu dla tej predykcji
-        time_input = t[start_idx:start_idx + T_in]
-        time_output = t[start_idx + T_in:start_idx + T_in + T_out]
-
-        # Dane wejściowe i docelowe
-        input_seq = trajectory[start_idx:start_idx + T_in]
-        target_seq = trajectory[start_idx + T_in:start_idx + T_in + T_out]
-
-        # Zoom - położenie
-        fig_zoom_x = plot_prediction_with_uncertainty(
-            time_input=time_input,
-            time_output=time_output,
-            input_seq=input_seq,
-            target_seq=target_seq,
-            mu_seq=mu,
-            sigma_seq=sigma,
-            feature_idx=0,
-            feature_name='Położenie x [m]',
-            title=f'Predykcja #{i+1} - położenie (t={t[start_idx]:.1f}s)',
-            save_path=str(zooms_dir / f'zoom_{i+1}_position.png')
-        )
-        plt.close(fig_zoom_x)
-
-        # Zoom - prędkość
-        fig_zoom_v = plot_prediction_with_uncertainty(
-            time_input=time_input,
-            time_output=time_output,
-            input_seq=input_seq,
-            target_seq=target_seq,
-            mu_seq=mu,
-            sigma_seq=sigma,
-            feature_idx=1,
-            feature_name='Prędkość v [m/s]',
-            title=f'Predykcja #{i+1} - prędkość (t={t[start_idx]:.1f}s)',
-            save_path=str(zooms_dir / f'zoom_{i+1}_velocity.png')
-        )
-        plt.close(fig_zoom_v)
-
-    # Predykcja rekurencyjna (jeśli włączona)
-    recursive_steps = args.recursive_steps
-    if recursive_steps > 0:
-        print(f"\n  Predykcja rekurencyjna ({recursive_steps} kroków)...")
-
-        recursive_dir = output_dir / 'recursive'
-        recursive_dir.mkdir(exist_ok=True)
-
-        # Początkowe okno wejściowe (pierwsze T_in kroków)
-        initial_input = trajectory[:T_in]
-        initial_input_norm = trajectory_norm[:T_in]
-
-        recursive_predictions = []
-        current_input_norm = initial_input_norm.copy()
-
-        for step in range(recursive_steps):
-            # Predykcja
-            input_tensor = torch.FloatTensor(current_input_norm).unsqueeze(0).to(device)
-
-            with torch.no_grad():
-                pred = model.predict_trajectory(input_tensor, num_samples=50)
-
-            mu_norm = pred['mu'].cpu().numpy()
-            sigma_norm = pred['sigma'].cpu().numpy()
-
-            # Denormalizacja
-            mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu_norm, sigma_norm)
-
-            recursive_predictions.append({
-                'mu': mu_denorm,
-                'sigma': sigma_denorm,
-                'mu_norm': mu_norm,
-                'time_start': (T_in + step * T_out) * dt
-            })
-
-            print(f"    Krok {step+1}/{recursive_steps}: t={recursive_predictions[-1]['time_start']:.1f}s")
-
-            # Przygotowanie wejścia dla następnego kroku
-            # Używamy ostatnich T_in kroków z predykcji (lub całej jeśli T_out >= T_in)
-            if T_out >= T_in:
-                # Bierzemy ostatnie T_in kroków z predykcji
-                current_input_norm = mu_norm[-T_in:]
-            else:
-                # Łączymy część starego wejścia z nową predykcją
-                overlap = T_in - T_out
-                current_input_norm = np.concatenate([
-                    current_input_norm[-overlap:],
-                    mu_norm
-                ], axis=0)
-
-        # Wizualizacja rekurencyjna - położenie
-        fig_rec_x = plot_recursive_prediction(
-            full_trajectory=trajectory,
-            full_time=t,
-            initial_input=initial_input,
-            recursive_predictions=recursive_predictions,
-            T_in=T_in,
-            T_out=T_out,
-            feature_idx=0,
-            feature_name='Położenie x [m]',
-            title=f'Predykcja rekurencyjna położenia ({recursive_steps} kroków)',
-            save_path=str(recursive_dir / 'recursive_position.png'),
-            oscillator_params=oscillator_params
-        )
-        plt.close(fig_rec_x)
-
-        # Wizualizacja rekurencyjna - prędkość
-        fig_rec_v = plot_recursive_prediction(
-            full_trajectory=trajectory,
-            full_time=t,
-            initial_input=initial_input,
-            recursive_predictions=recursive_predictions,
-            T_in=T_in,
-            T_out=T_out,
-            feature_idx=1,
-            feature_name='Prędkość v [m/s]',
-            title=f'Predykcja rekurencyjna prędkości ({recursive_steps} kroków)',
-            save_path=str(recursive_dir / 'recursive_velocity.png'),
-            oscillator_params=oscillator_params
-        )
-        plt.close(fig_rec_v)
-
-    # Zapisanie parametrów do pliku
+    # Zapisanie parametrów głównych
     params_file = output_dir / 'parameters.txt'
     with open(params_file, 'w', encoding='utf-8') as f:
         f.write(f"Seed: {seed}\n")
@@ -1382,13 +1465,17 @@ def predict(args: argparse.Namespace) -> None:
         f.write(f"T_out: {T_out}\n")
         f.write(f"dt: {dt}\n")
         f.write(f"t_max: {t_max}\n")
-        f.write(f"num_predictions: {num_predictions}\n")
-        f.write(f"recursive_steps: {recursive_steps}\n")
-        f.write(f"\nParametry oscylatora:\n")
-        for k, v in oscillator_params.items():
+        f.write(f"num_predictions: {args.num_predictions}\n")
+        f.write(f"recursive_steps: {args.recursive_steps}\n")
+        f.write(f"\nParametry bazowe oscylatora:\n")
+        for k, v in base_params.items():
             f.write(f"  {k}: {v}\n")
+        f.write(f"\nTestowane typy: damped, undamped\n")
 
-    print(f"\nWyniki zapisane w: {output_dir}")
+    print(f"\n" + "=" * 40)
+    print(f"Wyniki zapisane w: {output_dir}")
+    print(f"  - damped/    (oscylator tłumiony)")
+    print(f"  - undamped/  (oscylator bez tłumienia)")
 
 
 def main() -> None:
