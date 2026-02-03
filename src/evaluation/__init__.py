@@ -10,6 +10,7 @@ from .visualization import (
     plot_phase_space,
     plot_prediction_with_uncertainty,
     plot_training_curves,
+    plot_multi_prediction_trajectory,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "plot_prediction_with_uncertainty",
     "plot_training_curves",
     "plot_phase_space",
+    "plot_multi_prediction_trajectory",
 ]

@@ -505,6 +505,138 @@ def plot_full_trajectory_with_prediction(
     return fig
 
 
+def plot_multi_prediction_trajectory(
+    full_trajectory: np.ndarray,
+    full_time: np.ndarray,
+    predictions: List[Dict],
+    T_in: int,
+    T_out: int,
+    feature_idx: int = 0,
+    feature_name: str = 'Położenie x [m]',
+    figsize: Tuple[int, int] = (16, 10),
+    title: Optional[str] = None,
+    save_path: Optional[str] = None,
+    oscillator_params: Optional[Dict] = None
+) -> plt.Figure:
+    """
+    Tworzy wykres pełnej trajektorii z wieloma predykcjami w różnych punktach.
+
+    Args:
+        full_trajectory: Pełna trajektoria (num_steps, features)
+        full_time: Pełny wektor czasu
+        predictions: Lista słowników z predykcjami, każdy zawiera:
+            - 'start_idx': Indeks początkowy okna wejściowego
+            - 'mu': Predykowana średnia (T_out, features)
+            - 'sigma': Predykowane odchylenie std (T_out, features)
+        T_in: Długość okna wejściowego
+        T_out: Długość horyzontu predykcji
+        feature_idx: Indeks cechy do wizualizacji (0 dla x, 1 dla v)
+        feature_name: Nazwa cechy do etykiet
+        figsize: Rozmiar figury
+        title: Opcjonalny tytuł wykresu
+        save_path: Opcjonalna ścieżka do zapisu wykresu
+        oscillator_params: Opcjonalne parametry oscylatora do wyświetlenia
+
+    Returns:
+        Obiekt Figure matplotlib
+    """
+    # Konwersja tensorów do numpy
+    if isinstance(full_trajectory, torch.Tensor):
+        full_trajectory = full_trajectory.detach().cpu().numpy()
+
+    # Kolory dla różnych predykcji
+    colors = plt.cm.Set1(np.linspace(0, 1, len(predictions)))
+
+    # Tworzenie wykresu
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # 1. Pełna trajektoria (cała, szara, w tle)
+    full_values = full_trajectory[:, feature_idx]
+    ax.plot(full_time, full_values, 'gray', linewidth=2, alpha=0.6, label='Pełna trajektoria')
+
+    # 2. Predykcje w różnych punktach
+    for i, pred in enumerate(predictions):
+        start_idx = pred['start_idx']
+        mu = pred['mu']
+        sigma = pred['sigma']
+
+        if isinstance(mu, torch.Tensor):
+            mu = mu.detach().cpu().numpy()
+        if isinstance(sigma, torch.Tensor):
+            sigma = sigma.detach().cpu().numpy()
+
+        input_end_idx = start_idx + T_in
+        output_end_idx = input_end_idx + T_out
+
+        mu_values = mu[:, feature_idx]
+        sigma_values = sigma[:, feature_idx]
+
+        # Czas dla predykcji
+        time_prediction = full_time[input_end_idx:output_end_idx]
+
+        # Okno wejściowe
+        ax.plot(full_time[start_idx:input_end_idx],
+                full_values[start_idx:input_end_idx],
+                color=colors[i], linewidth=2.5, alpha=0.8,
+                label=f'Input #{i+1} (t={full_time[start_idx]:.1f}s)')
+
+        # Wartości rzeczywiste (target)
+        ax.plot(full_time[input_end_idx:output_end_idx],
+                full_values[input_end_idx:output_end_idx],
+                color=colors[i], linewidth=2, linestyle='-', alpha=0.5)
+
+        # Przedziały ufności
+        ax.fill_between(
+            time_prediction,
+            mu_values - 2 * sigma_values,
+            mu_values + 2 * sigma_values,
+            alpha=0.15, color=colors[i]
+        )
+        ax.fill_between(
+            time_prediction,
+            mu_values - sigma_values,
+            mu_values + sigma_values,
+            alpha=0.25, color=colors[i]
+        )
+
+        # Predykcja
+        ax.plot(time_prediction, mu_values, '--', color=colors[i],
+                linewidth=2.5, alpha=0.9, label=f'Predykcja #{i+1}')
+
+        # Linia graniczna input/output
+        ax.axvline(x=full_time[input_end_idx], color=colors[i],
+                   linestyle=':', linewidth=1.5, alpha=0.5)
+
+    # Formatowanie
+    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_ylabel(feature_name, fontsize=12)
+    ax.legend(loc='upper right', fontsize=9, ncol=2)
+    ax.grid(True, alpha=0.3)
+
+    # Tytuł z parametrami oscylatora
+    if title:
+        full_title = title
+    else:
+        full_title = f'Trajektoria z {len(predictions)} predykcjami'
+
+    if oscillator_params:
+        param_str = f"m={oscillator_params.get('mass', '?')}, " \
+                    f"c={oscillator_params.get('damping', '?')}, " \
+                    f"k={oscillator_params.get('stiffness', '?')}, " \
+                    f"x₀={oscillator_params.get('x0', '?')}, " \
+                    f"v₀={oscillator_params.get('v0', '?')}"
+        full_title += f'\n({param_str})'
+
+    ax.set_title(full_title, fontsize=13)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+    return fig
+
+
 def plot_calibration_diagram(
     expected_coverage: List[float],
     actual_coverage: List[float],

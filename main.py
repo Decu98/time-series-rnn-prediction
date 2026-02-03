@@ -53,6 +53,7 @@ from src.evaluation.visualization import (
     plot_prediction_comparison,
     plot_uncertainty_evolution,
     plot_full_trajectory_with_prediction,
+    plot_multi_prediction_trajectory,
 )
 
 
@@ -89,6 +90,12 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default=None,
         help='Ścieżka do checkpointu modelu (do wznowienia treningu lub ewaluacji)'
+    )
+    parser.add_argument(
+        '--num-predictions',
+        type=int,
+        default=3,
+        help='Liczba predykcji na trajektorii (tryb predict)'
     )
     parser.add_argument(
         '--output-dir',
@@ -1005,11 +1012,17 @@ def visualize_results(
 
 def predict(args: argparse.Namespace) -> None:
     """
-    Przeprowadza predykcję dla pojedynczej trajektorii.
+    Przeprowadza predykcję na losowej trajektorii syntetycznej.
+
+    Generuje losową trajektorię oscylatora tłumionego i wykonuje
+    wiele predykcji w różnych punktach czasowych.
 
     Args:
         args: Argumenty wiersza poleceń
     """
+    import matplotlib.pyplot as plt
+    from src.data_generation.synthetic import DampedOscillator
+
     print("\n" + "=" * 60)
     print("PREDYKCJA")
     print("=" * 60)
@@ -1018,11 +1031,17 @@ def predict(args: argparse.Namespace) -> None:
         print("BŁĄD: Wymagany jest argument --checkpoint dla trybu predict")
         sys.exit(1)
 
-    # Ustawienie ziarna
-    setup_seed(args.seed)
+    # Ustawienie ziarna (losowego jeśli nie podano)
+    if args.seed == 42:  # domyślna wartość - użyj losowego
+        seed = np.random.randint(0, 10000)
+    else:
+        seed = args.seed
+    setup_seed(seed)
+    print(f"Seed: {seed}")
 
     # Tworzenie katalogu wyjściowego
-    output_dir = Path(args.output_dir) / 'predictions'
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(args.output_dir) / 'predictions' / f'pred_{timestamp}'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Ładowanie modelu
@@ -1032,73 +1051,147 @@ def predict(args: argparse.Namespace) -> None:
     model = model.to(device)
     model.eval()
 
-    # Generowanie pojedynczej trajektorii testowej
-    print("\nGenerowanie trajektorii testowej...")
-    from src.data_generation.synthetic import DampedOscillator
+    # Pobranie parametrów z modelu
+    T_in = model.hparams.get('T_in', args.T_in)
+    T_out = model.hparams.get('T_out', args.T_out)
+    print(f"Parametry modelu: T_in={T_in}, T_out={T_out}")
 
-    oscillator = DampedOscillator(mass=1.0, damping=0.3, stiffness=2.0)
-    t = np.arange(0, args.t_max, args.dt)
-    x, v = oscillator.generate_trajectory(x0=1.5, v0=0.0, t=t)
-    trajectory = np.column_stack([x, v])
-
-    # Preprocessing
+    # Ładowanie preprocessora
     preprocessor = DataPreprocessor()
     checkpoint_dir = Path(args.checkpoint).parent.parent
     preprocessor_path = checkpoint_dir / 'preprocessor_stats.npz'
 
     if preprocessor_path.exists():
         preprocessor.load_stats(str(preprocessor_path))
+        print(f"Załadowano preprocessor z: {preprocessor_path}")
+    else:
+        print("UWAGA: Brak pliku preprocessora - używam domyślnej normalizacji")
+
+    # Generowanie losowej trajektorii z losowymi parametrami
+    print("\nGenerowanie losowej trajektorii...")
+
+    # Losowe parametry oscylatora (w sensownych zakresach)
+    mass = np.random.uniform(0.5, 2.0)
+    damping = np.random.uniform(0.1, 0.8)
+    stiffness = np.random.uniform(1.0, 5.0)
+    x0 = np.random.uniform(-2.0, 2.0)
+    v0 = np.random.uniform(-1.0, 1.0)
+
+    oscillator_params = {
+        'mass': round(mass, 2),
+        'damping': round(damping, 2),
+        'stiffness': round(stiffness, 2),
+        'x0': round(x0, 2),
+        'v0': round(v0, 2)
+    }
+
+    print(f"  Parametry oscylatora:")
+    print(f"    - masa (m): {oscillator_params['mass']}")
+    print(f"    - tłumienie (c): {oscillator_params['damping']}")
+    print(f"    - sztywność (k): {oscillator_params['stiffness']}")
+    print(f"    - x₀: {oscillator_params['x0']}")
+    print(f"    - v₀: {oscillator_params['v0']}")
+
+    oscillator = DampedOscillator(mass=mass, damping=damping, stiffness=stiffness)
+
+    # Generowanie trajektorii - wystarczająco długiej dla wielu predykcji
+    dt = args.dt
+    t_max = args.t_max
+    t = np.arange(0, t_max, dt)
+    x, v = oscillator.generate_trajectory(x0=x0, v0=v0, t=t)
+    trajectory = np.column_stack([x, v])
+
+    print(f"  Długość trajektorii: {len(t)} kroków ({t_max}s przy dt={dt}s)")
+
+    # Normalizacja trajektorii
+    if preprocessor_path.exists():
+        trajectory_norm = preprocessor.transform(trajectory)
     else:
         # Fallback - dopasowanie do trajektorii
         preprocessor.fit(trajectory[np.newaxis, :, :])
+        trajectory_norm = preprocessor.transform(trajectory)
 
-    # Normalizacja
-    trajectory_norm = preprocessor.transform(trajectory)
+    # Wybór punktów startowych dla predykcji
+    num_predictions = args.num_predictions
+    max_start = len(t) - T_in - T_out
 
-    # Wybranie okna wejściowego
-    start_idx = 100  # Początek okna
-    input_seq = trajectory_norm[start_idx:start_idx + args.T_in]
-    target_seq = trajectory_norm[start_idx + args.T_in:start_idx + args.T_in + args.T_out]
+    if max_start <= 0:
+        print(f"BŁĄD: Trajektoria zbyt krótka dla T_in={T_in}, T_out={T_out}")
+        sys.exit(1)
 
-    # Konwersja do tensora i przeniesienie na GPU
-    input_tensor = torch.FloatTensor(input_seq).unsqueeze(0).to(device)
+    # Równomierne rozmieszczenie punktów predykcji
+    start_indices = np.linspace(0, max_start, num_predictions, dtype=int)
 
-    # Predykcja
-    print("\nWykonywanie predykcji...")
-    with torch.no_grad():
-        predictions = model.predict_trajectory(input_tensor, num_samples=100)
+    print(f"\nWykonywanie {num_predictions} predykcji...")
 
-    mu = predictions['mu'].cpu().numpy()
-    sigma = predictions['sigma'].cpu().numpy()
-    samples = predictions['samples'].cpu().numpy()
+    predictions_list = []
+    for i, start_idx in enumerate(start_indices):
+        # Przygotowanie danych wejściowych
+        input_seq = trajectory_norm[start_idx:start_idx + T_in]
+        input_tensor = torch.FloatTensor(input_seq).unsqueeze(0).to(device)
 
-    # Denormalizacja
-    input_denorm = preprocessor.inverse_transform(input_seq)
-    target_denorm = preprocessor.inverse_transform(target_seq)
-    mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu, sigma)
+        # Predykcja
+        with torch.no_grad():
+            pred = model.predict_trajectory(input_tensor, num_samples=50)
 
-    # Wektory czasu
-    time_input = t[start_idx:start_idx + args.T_in]
-    time_output = t[start_idx + args.T_in:start_idx + args.T_in + args.T_out]
+        mu = pred['mu'].cpu().numpy()
+        sigma = pred['sigma'].cpu().numpy()
 
-    # Wizualizacja
+        # Denormalizacja
+        mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu, sigma)
+
+        predictions_list.append({
+            'start_idx': start_idx,
+            'mu': mu_denorm,
+            'sigma': sigma_denorm
+        })
+
+        print(f"  Predykcja {i+1}/{num_predictions}: t_start={t[start_idx]:.2f}s")
+
+    # Wizualizacja - położenie (x)
     print("\nGenerowanie wizualizacji...")
 
-    fig = plot_prediction_with_uncertainty(
-        time_input=time_input,
-        time_output=time_output,
-        input_seq=input_denorm,
-        target_seq=target_denorm,
-        mu_seq=mu_denorm,
-        sigma_seq=sigma_denorm,
+    fig1 = plot_multi_prediction_trajectory(
+        full_trajectory=trajectory,
+        full_time=t,
+        predictions=predictions_list,
+        T_in=T_in,
+        T_out=T_out,
         feature_idx=0,
         feature_name='Położenie x [m]',
-        title='Predykcja położenia oscylatora tłumionego',
-        save_path=str(output_dir / 'single_prediction.png')
+        title=f'Predykcje położenia ({num_predictions} punktów)',
+        save_path=str(output_dir / 'multi_prediction_position.png'),
+        oscillator_params=oscillator_params
     )
+    plt.close(fig1)
 
-    import matplotlib.pyplot as plt
-    plt.close(fig)
+    # Wizualizacja - prędkość (v)
+    fig2 = plot_multi_prediction_trajectory(
+        full_trajectory=trajectory,
+        full_time=t,
+        predictions=predictions_list,
+        T_in=T_in,
+        T_out=T_out,
+        feature_idx=1,
+        feature_name='Prędkość v [m/s]',
+        title=f'Predykcje prędkości ({num_predictions} punktów)',
+        save_path=str(output_dir / 'multi_prediction_velocity.png'),
+        oscillator_params=oscillator_params
+    )
+    plt.close(fig2)
+
+    # Zapisanie parametrów do pliku
+    params_file = output_dir / 'parameters.txt'
+    with open(params_file, 'w', encoding='utf-8') as f:
+        f.write(f"Seed: {seed}\n")
+        f.write(f"T_in: {T_in}\n")
+        f.write(f"T_out: {T_out}\n")
+        f.write(f"dt: {dt}\n")
+        f.write(f"t_max: {t_max}\n")
+        f.write(f"num_predictions: {num_predictions}\n")
+        f.write(f"\nParametry oscylatora:\n")
+        for k, v in oscillator_params.items():
+            f.write(f"  {k}: {v}\n")
 
     print(f"\nWyniki zapisane w: {output_dir}")
 
