@@ -322,37 +322,78 @@ def generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     print(f"\nDane zapisane do: {args.data_path}")
     print(f"Kształt danych: {dataset['trajectories'].shape}")
 
-    # Wizualizacja losowej trajektorii
-    plot_sample_trajectory(dataset, data_dir)
+    # Wizualizacja przykładowych trajektorii
+    print("\nGenerowanie wykresów przykładowych trajektorii...")
+    if args.undamped_ratio > 0 and args.undamped_ratio < 1.0:
+        # Mieszany dataset - zapisz oba typy
+        plot_sample_trajectory(dataset, data_dir, trajectory_type='damped', filename_suffix='_damped')
+        plot_sample_trajectory(dataset, data_dir, trajectory_type='undamped', filename_suffix='_undamped')
+    else:
+        # Jednorodny dataset
+        plot_sample_trajectory(dataset, data_dir)
 
     return dataset
 
 
-def plot_sample_trajectory(dataset: Dict[str, np.ndarray], output_dir: Path) -> None:
+def plot_sample_trajectory(
+    dataset: Dict[str, np.ndarray],
+    output_dir: Path,
+    trajectory_type: Optional[str] = None,
+    filename_suffix: str = ''
+) -> None:
     """
-    Generuje wykres losowej trajektorii z datasetu.
+    Generuje wykres trajektorii z datasetu.
 
     Args:
         dataset: Słownik z danymi (trajectories, time, params)
         output_dir: Katalog na zapis wykresu
+        trajectory_type: Typ trajektorii ('damped', 'undamped', None dla losowej)
+        filename_suffix: Sufiks do nazwy pliku (np. '_damped')
     """
     import matplotlib.pyplot as plt
 
-    # Losowy indeks trajektorii
-    idx = np.random.randint(0, dataset['trajectories'].shape[0])
+    # Szukanie trajektorii odpowiedniego typu
+    params_list = dataset['params']
+    if trajectory_type is not None and isinstance(params_list, list) and len(params_list) > 0:
+        # Szukamy trajektorii danego typu
+        if isinstance(params_list[0], dict) and 'type' in params_list[0]:
+            matching_indices = [
+                i for i, p in enumerate(params_list)
+                if p.get('type') == trajectory_type
+            ]
+            if matching_indices:
+                idx = np.random.choice(matching_indices)
+            else:
+                idx = np.random.randint(0, dataset['trajectories'].shape[0])
+        else:
+            idx = np.random.randint(0, dataset['trajectories'].shape[0])
+    else:
+        idx = np.random.randint(0, dataset['trajectories'].shape[0])
+
     trajectory = dataset['trajectories'][idx]
     time = dataset['time']
-    params = dataset['params'][idx] if isinstance(dataset['params'], list) else dataset['params'][idx]
+    params = params_list[idx] if isinstance(params_list, list) else params_list[idx]
 
     x = trajectory[:, 0]  # położenie
     v = trajectory[:, 1]  # prędkość
 
+    # Określenie typu dla tytułu
+    if isinstance(params, dict):
+        traj_type = params.get('type', 'unknown')
+        is_undamped = params.get('damping', 1) == 0 or traj_type == 'undamped'
+    else:
+        is_undamped = params[1] == 0 if len(params) > 1 else False
+        traj_type = 'undamped' if is_undamped else 'damped'
+
+    type_label = 'BEZ TŁUMIENIA' if is_undamped else 'TŁUMIONY'
+
     # Tworzenie wykresu 2x2
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle(f'Przykładowa trajektoria #{idx} z wygenerowanego datasetu', fontsize=14, fontweight='bold')
+    fig.suptitle(f'Trajektoria #{idx} ({type_label})', fontsize=14, fontweight='bold')
 
     # 1. Położenie w czasie
-    axes[0, 0].plot(time, x, 'b-', linewidth=1.2)
+    color = 'green' if is_undamped else 'blue'
+    axes[0, 0].plot(time, x, f'{color[0]}-', linewidth=1.2)
     axes[0, 0].set_xlabel('Czas [s]')
     axes[0, 0].set_ylabel('Położenie x [m]')
     axes[0, 0].set_title('Położenie vs czas')
@@ -368,7 +409,8 @@ def plot_sample_trajectory(dataset: Dict[str, np.ndarray], output_dir: Path) -> 
     axes[0, 1].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
 
     # 3. Portret fazowy
-    axes[1, 0].plot(x, v, 'g-', linewidth=1.2)
+    phase_color = 'lime' if is_undamped else 'green'
+    axes[1, 0].plot(x, v, color=phase_color, linewidth=1.2)
     axes[1, 0].plot(x[0], v[0], 'go', markersize=10, label='Start')
     axes[1, 0].plot(x[-1], v[-1], 'rs', markersize=10, label='Koniec')
     axes[1, 0].set_xlabel('Położenie x [m]')
@@ -386,7 +428,7 @@ def plot_sample_trajectory(dataset: Dict[str, np.ndarray], output_dir: Path) -> 
     if isinstance(params, np.ndarray):
         mass, damping, stiffness, x0, v0 = params[:5]
         omega_0 = np.sqrt(stiffness / mass)
-        zeta = damping / (2 * np.sqrt(stiffness * mass))
+        zeta = damping / (2 * np.sqrt(stiffness * mass)) if damping > 0 else 0
     else:
         mass = params['mass']
         damping = params['damping']
@@ -394,10 +436,13 @@ def plot_sample_trajectory(dataset: Dict[str, np.ndarray], output_dir: Path) -> 
         x0 = params['x0']
         v0 = params['v0']
         omega_0 = params.get('omega_0', np.sqrt(stiffness / mass))
-        zeta = params.get('zeta', damping / (2 * np.sqrt(stiffness * mass)))
+        zeta = params.get('zeta', damping / (2 * np.sqrt(stiffness * mass)) if damping > 0 else 0)
+
+    osc_type = 'HARMONICZNY PROSTY' if is_undamped else 'TŁUMIONY'
+    box_color = 'lightgreen' if is_undamped else 'wheat'
 
     info_text = f"""
-    PARAMETRY OSCYLATORA TŁUMIONEGO
+    OSCYLATOR {osc_type}
     ════════════════════════════════════
 
     Równanie ruchu:
@@ -419,21 +464,22 @@ def plot_sample_trajectory(dataset: Dict[str, np.ndarray], output_dir: Path) -> 
     Częstość własna (ω₀): {omega_0:.4f} rad/s
     Wsp. tłumienia (ζ):    {zeta:.4f}
 
-    Typ ruchu: {'Podkrytyczny (oscylacje)' if zeta < 1 else 'Nadkrytyczny (brak oscylacji)' if zeta > 1 else 'Krytyczny'}
+    Typ ruchu: {'Oscylacje niegasnące' if is_undamped else 'Oscylacje gasnące' if zeta < 1 else 'Ruch aperiodyczny'}
     """
 
     axes[1, 1].text(0.1, 0.95, info_text, transform=axes[1, 1].transAxes,
                     fontsize=11, verticalalignment='top', fontfamily='monospace',
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                    bbox=dict(boxstyle='round', facecolor=box_color, alpha=0.5))
 
     plt.tight_layout()
 
     # Zapis wykresu
-    plot_path = output_dir / 'sample_trajectory.png'
+    filename = f'sample_trajectory{filename_suffix}.png'
+    plot_path = output_dir / filename
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
 
-    print(f"\nWykres przykładowej trajektorii zapisany do: {plot_path}")
+    print(f"  Wykres zapisany: {plot_path}")
 
 
 def load_or_generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
