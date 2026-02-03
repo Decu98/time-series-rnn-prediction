@@ -505,6 +505,146 @@ def plot_full_trajectory_with_prediction(
     return fig
 
 
+def plot_recursive_prediction(
+    full_trajectory: np.ndarray,
+    full_time: np.ndarray,
+    initial_input: np.ndarray,
+    recursive_predictions: List[Dict],
+    T_in: int,
+    T_out: int,
+    feature_idx: int = 0,
+    feature_name: str = 'Położenie x [m]',
+    figsize: Tuple[int, int] = (18, 10),
+    title: Optional[str] = None,
+    save_path: Optional[str] = None,
+    oscillator_params: Optional[Dict] = None
+) -> plt.Figure:
+    """
+    Tworzy wykres rekurencyjnej predykcji.
+
+    Pokazuje jak model przewiduje trajektorię krok po kroku,
+    używając własnych predykcji jako wejścia dla kolejnych kroków.
+
+    Args:
+        full_trajectory: Pełna trajektoria rzeczywista (num_steps, features)
+        full_time: Pełny wektor czasu
+        initial_input: Początkowe okno wejściowe (T_in, features)
+        recursive_predictions: Lista predykcji rekurencyjnych, każda zawiera:
+            - 'mu': Predykowana średnia (T_out, features)
+            - 'sigma': Predykowane odchylenie std (T_out, features)
+            - 'time_start': Czas początkowy predykcji
+        T_in: Długość okna wejściowego
+        T_out: Długość horyzontu predykcji
+        feature_idx: Indeks cechy do wizualizacji
+        feature_name: Nazwa cechy
+        figsize: Rozmiar figury
+        title: Tytuł wykresu
+        save_path: Ścieżka do zapisu
+        oscillator_params: Parametry oscylatora
+
+    Returns:
+        Obiekt Figure matplotlib
+    """
+    if isinstance(full_trajectory, torch.Tensor):
+        full_trajectory = full_trajectory.detach().cpu().numpy()
+    if isinstance(initial_input, torch.Tensor):
+        initial_input = initial_input.detach().cpu().numpy()
+
+    # Kolory dla kolejnych predykcji (gradient od zielonego do czerwonego)
+    n_preds = len(recursive_predictions)
+    colors = plt.cm.RdYlGn_r(np.linspace(0.1, 0.9, n_preds))
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # 1. Pełna trajektoria rzeczywista (szara, w tle)
+    full_values = full_trajectory[:, feature_idx]
+    ax.plot(full_time, full_values, 'gray', linewidth=2, alpha=0.5,
+            label='Trajektoria rzeczywista')
+
+    # 2. Początkowe okno wejściowe (niebieskie)
+    input_time = full_time[:T_in]
+    input_values = initial_input[:, feature_idx]
+    ax.plot(input_time, input_values, 'b-', linewidth=3, alpha=0.9,
+            label=f'Wejście początkowe (T_in={T_in})')
+
+    # 3. Predykcje rekurencyjne
+    current_time = full_time[T_in - 1]  # Ostatni punkt wejścia
+
+    for i, pred in enumerate(recursive_predictions):
+        mu = pred['mu']
+        sigma = pred['sigma']
+
+        if isinstance(mu, torch.Tensor):
+            mu = mu.detach().cpu().numpy()
+        if isinstance(sigma, torch.Tensor):
+            sigma = sigma.detach().cpu().numpy()
+
+        mu_values = mu[:, feature_idx]
+        sigma_values = sigma[:, feature_idx]
+
+        # Czas dla tej predykcji
+        dt = full_time[1] - full_time[0]
+        pred_time = np.arange(T_out) * dt + current_time + dt
+
+        # Przedziały ufności
+        ax.fill_between(
+            pred_time,
+            mu_values - 2 * sigma_values,
+            mu_values + 2 * sigma_values,
+            alpha=0.15, color=colors[i]
+        )
+        ax.fill_between(
+            pred_time,
+            mu_values - sigma_values,
+            mu_values + sigma_values,
+            alpha=0.25, color=colors[i]
+        )
+
+        # Predykcja
+        label = f'Predykcja #{i+1}' if i < 3 or i == n_preds - 1 else None
+        ax.plot(pred_time, mu_values, '--', color=colors[i], linewidth=2.5,
+                alpha=0.9, label=label)
+
+        # Linia graniczna
+        ax.axvline(x=current_time + dt, color=colors[i], linestyle=':',
+                   linewidth=1, alpha=0.5)
+
+        # Aktualizacja czasu dla następnej predykcji
+        current_time = pred_time[-1]
+
+    # Oznaczenie końca predykcji
+    total_pred_time = T_in * dt + n_preds * T_out * dt
+    ax.axvline(x=total_pred_time, color='red', linestyle='--', linewidth=2,
+               alpha=0.7, label=f'Koniec predykcji ({n_preds} kroków)')
+
+    # Formatowanie
+    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_ylabel(feature_name, fontsize=12)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    # Tytuł
+    if title:
+        full_title = title
+    else:
+        full_title = f'Predykcja rekurencyjna ({n_preds} kroków)'
+
+    if oscillator_params:
+        param_str = f"m={oscillator_params.get('mass', '?')}, " \
+                    f"c={oscillator_params.get('damping', '?')}, " \
+                    f"k={oscillator_params.get('stiffness', '?')}"
+        full_title += f'\n({param_str})'
+
+    ax.set_title(full_title, fontsize=13)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
+    return fig
+
+
 def plot_multi_prediction_trajectory(
     full_trajectory: np.ndarray,
     full_time: np.ndarray,

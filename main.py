@@ -54,6 +54,7 @@ from src.evaluation.visualization import (
     plot_uncertainty_evolution,
     plot_full_trajectory_with_prediction,
     plot_multi_prediction_trajectory,
+    plot_recursive_prediction,
 )
 
 
@@ -96,6 +97,12 @@ def parse_arguments() -> argparse.Namespace:
         type=int,
         default=3,
         help='Liczba predykcji na trajektorii (tryb predict)'
+    )
+    parser.add_argument(
+        '--recursive-steps',
+        type=int,
+        default=0,
+        help='Liczba kroków rekurencyjnych (0=wyłączony, >0=predykcja rekurencyjna)'
     )
     parser.add_argument(
         '--output-dir',
@@ -1227,6 +1234,88 @@ def predict(args: argparse.Namespace) -> None:
         )
         plt.close(fig_zoom_v)
 
+    # Predykcja rekurencyjna (jeśli włączona)
+    recursive_steps = args.recursive_steps
+    if recursive_steps > 0:
+        print(f"\n  Predykcja rekurencyjna ({recursive_steps} kroków)...")
+
+        recursive_dir = output_dir / 'recursive'
+        recursive_dir.mkdir(exist_ok=True)
+
+        # Początkowe okno wejściowe (pierwsze T_in kroków)
+        initial_input = trajectory[:T_in]
+        initial_input_norm = trajectory_norm[:T_in]
+
+        recursive_predictions = []
+        current_input_norm = initial_input_norm.copy()
+
+        for step in range(recursive_steps):
+            # Predykcja
+            input_tensor = torch.FloatTensor(current_input_norm).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                pred = model.predict_trajectory(input_tensor, num_samples=50)
+
+            mu_norm = pred['mu'].cpu().numpy()
+            sigma_norm = pred['sigma'].cpu().numpy()
+
+            # Denormalizacja
+            mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu_norm, sigma_norm)
+
+            recursive_predictions.append({
+                'mu': mu_denorm,
+                'sigma': sigma_denorm,
+                'mu_norm': mu_norm,
+                'time_start': (T_in + step * T_out) * dt
+            })
+
+            print(f"    Krok {step+1}/{recursive_steps}: t={recursive_predictions[-1]['time_start']:.1f}s")
+
+            # Przygotowanie wejścia dla następnego kroku
+            # Używamy ostatnich T_in kroków z predykcji (lub całej jeśli T_out >= T_in)
+            if T_out >= T_in:
+                # Bierzemy ostatnie T_in kroków z predykcji
+                current_input_norm = mu_norm[-T_in:]
+            else:
+                # Łączymy część starego wejścia z nową predykcją
+                overlap = T_in - T_out
+                current_input_norm = np.concatenate([
+                    current_input_norm[-overlap:],
+                    mu_norm
+                ], axis=0)
+
+        # Wizualizacja rekurencyjna - położenie
+        fig_rec_x = plot_recursive_prediction(
+            full_trajectory=trajectory,
+            full_time=t,
+            initial_input=initial_input,
+            recursive_predictions=recursive_predictions,
+            T_in=T_in,
+            T_out=T_out,
+            feature_idx=0,
+            feature_name='Położenie x [m]',
+            title=f'Predykcja rekurencyjna położenia ({recursive_steps} kroków)',
+            save_path=str(recursive_dir / 'recursive_position.png'),
+            oscillator_params=oscillator_params
+        )
+        plt.close(fig_rec_x)
+
+        # Wizualizacja rekurencyjna - prędkość
+        fig_rec_v = plot_recursive_prediction(
+            full_trajectory=trajectory,
+            full_time=t,
+            initial_input=initial_input,
+            recursive_predictions=recursive_predictions,
+            T_in=T_in,
+            T_out=T_out,
+            feature_idx=1,
+            feature_name='Prędkość v [m/s]',
+            title=f'Predykcja rekurencyjna prędkości ({recursive_steps} kroków)',
+            save_path=str(recursive_dir / 'recursive_velocity.png'),
+            oscillator_params=oscillator_params
+        )
+        plt.close(fig_rec_v)
+
     # Zapisanie parametrów do pliku
     params_file = output_dir / 'parameters.txt'
     with open(params_file, 'w', encoding='utf-8') as f:
@@ -1236,6 +1325,7 @@ def predict(args: argparse.Namespace) -> None:
         f.write(f"dt: {dt}\n")
         f.write(f"t_max: {t_max}\n")
         f.write(f"num_predictions: {num_predictions}\n")
+        f.write(f"recursive_steps: {recursive_steps}\n")
         f.write(f"\nParametry oscylatora:\n")
         for k, v in oscillator_params.items():
             f.write(f"  {k}: {v}\n")

@@ -11,6 +11,7 @@ from .visualization import (
     plot_prediction_with_uncertainty,
     plot_training_curves,
     plot_multi_prediction_trajectory,
+    plot_recursive_prediction,
 )
 
 __all__ = [
