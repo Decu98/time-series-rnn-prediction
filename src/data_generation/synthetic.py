@@ -158,6 +158,31 @@ class DampedOscillator:
         return np.column_stack([x, v])
 
 
+class SimpleHarmonicOscillator(DampedOscillator):
+    """
+    Oscylator harmoniczny prosty (bez tłumienia).
+
+    Równanie ruchu:
+        m * x''(t) + k * x(t) = 0
+
+    Jest to szczególny przypadek oscylatora tłumionego z c=0.
+    """
+
+    def __init__(
+        self,
+        mass: float = 1.0,
+        stiffness: float = 1.0
+    ):
+        """
+        Inicjalizacja oscylatora prostego.
+
+        Args:
+            mass: Masa układu [kg]
+            stiffness: Sztywność sprężyny [N/m]
+        """
+        super().__init__(mass=mass, damping=0.0, stiffness=stiffness)
+
+
 def add_noise(
     data: np.ndarray,
     noise_std: float = 0.01,
@@ -191,7 +216,8 @@ def generate_dataset(
     x0_range: Tuple[float, float] = (-2.0, 2.0),
     v0_range: Tuple[float, float] = (-1.0, 1.0),
     noise_std: float = 0.01,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    undamped_ratio: float = 0.0
 ) -> Dict[str, np.ndarray]:
     """
     Generuje zbiór danych zawierający wiele trajektorii oscylatora.
@@ -210,6 +236,7 @@ def generate_dataset(
         v0_range: Zakres prędkości początkowej (min, max) [m/s]
         noise_std: Odchylenie standardowe szumu pomiarowego
         seed: Ziarno generatora losowego
+        undamped_ratio: Proporcja trajektorii bez tłumienia (0.0 - 1.0)
 
     Returns:
         Słownik zawierający:
@@ -224,21 +251,22 @@ def generate_dataset(
     t = np.arange(0, t_max, dt)
     num_steps = len(t)
 
+    # Liczba trajektorii bez tłumienia
+    num_undamped = int(num_trajectories * undamped_ratio)
+    num_damped = num_trajectories - num_undamped
+
     # Inicjalizacja macierzy trajektorii
     trajectories = np.zeros((num_trajectories, num_steps, 2))
     params_list = []
 
-    for i in range(num_trajectories):
-        # Losowanie parametrów fizycznych
+    # Generowanie trajektorii tłumionych
+    for i in range(num_damped):
         mass = np.random.uniform(*mass_range)
         damping = np.random.uniform(*damping_range)
         stiffness = np.random.uniform(*stiffness_range)
-
-        # Losowanie warunków początkowych
         x0 = np.random.uniform(*x0_range)
         v0 = np.random.uniform(*v0_range)
 
-        # Tworzenie oscylatora i generacja trajektorii
         oscillator = DampedOscillator(
             mass=mass,
             damping=damping,
@@ -247,13 +275,11 @@ def generate_dataset(
 
         state = oscillator.generate_state_space(x0, v0, t)
 
-        # Dodanie szumu (jeśli noise_std > 0)
         if noise_std > 0:
             state = add_noise(state, noise_std)
 
         trajectories[i] = state
 
-        # Zapisanie parametrów
         params_list.append({
             'mass': mass,
             'damping': damping,
@@ -261,8 +287,45 @@ def generate_dataset(
             'x0': x0,
             'v0': v0,
             'omega_0': oscillator.params.omega_0,
-            'zeta': oscillator.params.zeta
+            'zeta': oscillator.params.zeta,
+            'type': 'damped'
         })
+
+    # Generowanie trajektorii bez tłumienia
+    for i in range(num_damped, num_trajectories):
+        mass = np.random.uniform(*mass_range)
+        stiffness = np.random.uniform(*stiffness_range)
+        x0 = np.random.uniform(*x0_range)
+        v0 = np.random.uniform(*v0_range)
+
+        oscillator = SimpleHarmonicOscillator(
+            mass=mass,
+            stiffness=stiffness
+        )
+
+        state = oscillator.generate_state_space(x0, v0, t)
+
+        if noise_std > 0:
+            state = add_noise(state, noise_std)
+
+        trajectories[i] = state
+
+        params_list.append({
+            'mass': mass,
+            'damping': 0.0,
+            'stiffness': stiffness,
+            'x0': x0,
+            'v0': v0,
+            'omega_0': oscillator.params.omega_0,
+            'zeta': 0.0,
+            'type': 'undamped'
+        })
+
+    # Losowe przemieszanie trajektorii
+    if undamped_ratio > 0:
+        indices = np.random.permutation(num_trajectories)
+        trajectories = trajectories[indices]
+        params_list = [params_list[i] for i in indices]
 
     return {
         'trajectories': trajectories,

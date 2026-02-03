@@ -136,6 +136,12 @@ def parse_arguments() -> argparse.Namespace:
         default=0.01,
         help='Odchylenie standardowe szumu pomiarowego'
     )
+    parser.add_argument(
+        '--undamped-ratio',
+        type=float,
+        default=0.0,
+        help='Proporcja trajektorii bez tłumienia (0.0-1.0, np. 0.5 = 50%%)'
+    )
 
     # Parametry okien czasowych
     parser.add_argument(
@@ -296,13 +302,19 @@ def generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     print(f"  - Czas symulacji: {args.t_max} s")
     print(f"  - Krok czasowy: {args.dt} s")
     print(f"  - Szum pomiarowy: σ = {args.noise_std}")
+    if args.undamped_ratio > 0:
+        num_undamped = int(args.num_trajectories * args.undamped_ratio)
+        num_damped = args.num_trajectories - num_undamped
+        print(f"  - Trajektorie tłumione: {num_damped}")
+        print(f"  - Trajektorie bez tłumienia: {num_undamped} ({args.undamped_ratio*100:.0f}%)")
 
     dataset = generate_dataset(
         num_trajectories=args.num_trajectories,
         dt=args.dt,
         t_max=args.t_max,
         noise_std=args.noise_std,
-        seed=args.seed
+        seed=args.seed,
+        undamped_ratio=args.undamped_ratio
     )
 
     # Zapisanie do pliku
