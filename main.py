@@ -1148,7 +1148,7 @@ def predict(args: argparse.Namespace) -> None:
 
         print(f"  Predykcja {i+1}/{num_predictions}: t_start={t[start_idx]:.2f}s")
 
-    # Wizualizacja - położenie (x)
+    # Wizualizacja - pełne wykresy
     print("\nGenerowanie wizualizacji...")
 
     fig1 = plot_multi_prediction_trajectory(
@@ -1165,7 +1165,6 @@ def predict(args: argparse.Namespace) -> None:
     )
     plt.close(fig1)
 
-    # Wizualizacja - prędkość (v)
     fig2 = plot_multi_prediction_trajectory(
         full_trajectory=trajectory,
         full_time=t,
@@ -1179,6 +1178,54 @@ def predict(args: argparse.Namespace) -> None:
         oscillator_params=oscillator_params
     )
     plt.close(fig2)
+
+    # Zoomy dla poszczególnych predykcji
+    zooms_dir = output_dir / 'zooms'
+    zooms_dir.mkdir(exist_ok=True)
+    print(f"  Generowanie {num_predictions} zoomów...")
+
+    for i, pred in enumerate(predictions_list):
+        start_idx = pred['start_idx']
+        mu = pred['mu']
+        sigma = pred['sigma']
+
+        # Wektory czasu dla tej predykcji
+        time_input = t[start_idx:start_idx + T_in]
+        time_output = t[start_idx + T_in:start_idx + T_in + T_out]
+
+        # Dane wejściowe i docelowe
+        input_seq = trajectory[start_idx:start_idx + T_in]
+        target_seq = trajectory[start_idx + T_in:start_idx + T_in + T_out]
+
+        # Zoom - położenie
+        fig_zoom_x = plot_prediction_with_uncertainty(
+            time_input=time_input,
+            time_output=time_output,
+            input_seq=input_seq,
+            target_seq=target_seq,
+            mu_seq=mu,
+            sigma_seq=sigma,
+            feature_idx=0,
+            feature_name='Położenie x [m]',
+            title=f'Predykcja #{i+1} - położenie (t={t[start_idx]:.1f}s)',
+            save_path=str(zooms_dir / f'zoom_{i+1}_position.png')
+        )
+        plt.close(fig_zoom_x)
+
+        # Zoom - prędkość
+        fig_zoom_v = plot_prediction_with_uncertainty(
+            time_input=time_input,
+            time_output=time_output,
+            input_seq=input_seq,
+            target_seq=target_seq,
+            mu_seq=mu,
+            sigma_seq=sigma,
+            feature_idx=1,
+            feature_name='Prędkość v [m/s]',
+            title=f'Predykcja #{i+1} - prędkość (t={t[start_idx]:.1f}s)',
+            save_path=str(zooms_dir / f'zoom_{i+1}_velocity.png')
+        )
+        plt.close(fig_zoom_v)
 
     # Zapisanie parametrów do pliku
     params_file = output_dir / 'parameters.txt'
