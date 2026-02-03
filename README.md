@@ -12,6 +12,9 @@ Projekt implementuje architekturę **Encoder-Decoder (Seq2Seq)** opartą na **LS
 - Teacher forcing ze scheduled sampling
 - Gradient clipping dla stabilności
 - Integracja z PyTorch Lightning
+- **Obsługa dwóch typów oscylatorów:** tłumiony i bez tłumienia
+- **Predykcja rekurencyjna** dla długoterminowych prognoz
+- Automatyczne testowanie na obu typach oscylatorów
 
 ## Wymagania
 
@@ -24,7 +27,7 @@ Projekt implementuje architekturę **Encoder-Decoder (Seq2Seq)** opartą na **LS
 1. **Sklonuj repozytorium:**
 ```bash
 git clone <repository-url>
-cd Kod
+cd time-series-rnn-prediction
 ```
 
 2. **Utwórz środowisko wirtualne:**
@@ -49,7 +52,7 @@ pip install -r requirements.txt
 │   └── synthetic/             # Dane syntetyczne
 ├── src/
 │   ├── data_generation/
-│   │   └── synthetic.py       # Generator oscylatora tłumionego
+│   │   └── synthetic.py       # Generator oscylatorów (tłumiony + prosty)
 │   ├── preprocessing/
 │   │   └── preprocessor.py    # Normalizacja i filtrowanie
 │   ├── dataset/
@@ -73,17 +76,31 @@ pip install -r requirements.txt
 
 ### 1. Generacja danych syntetycznych
 
-Generuje trajektorie oscylatora harmonicznego tłumionego:
+Generuje trajektorie oscylatora harmonicznego. Obsługuje dwa typy:
+- **Tłumiony** (damped) - oscylacje gasnące
+- **Bez tłumienia** (undamped) - oscylacje stałe
 
 ```bash
-python main.py --mode generate --num-trajectories 1000 --t-max 10.0
+# Tylko trajektorie tłumione (domyślnie)
+python main.py --mode generate --num-trajectories 1000 --t-max 20.0 --dt 0.1
+
+# Mieszany dataset (50% tłumione, 50% bez tłumienia)
+python main.py --mode generate --num-trajectories 1000 --undamped-ratio 0.5 --t-max 20.0 --dt 0.1
 ```
 
 **Parametry:**
-- `--num-trajectories` - liczba trajektorii (domyślnie: 1000)
-- `--t-max` - czas symulacji w sekundach (domyślnie: 10.0)
-- `--dt` - krok czasowy (domyślnie: 0.01)
-- `--noise-std` - szum pomiarowy (domyślnie: 0.01)
+
+| Parametr | Domyślnie | Opis |
+|----------|-----------|------|
+| `--num-trajectories` | 1000 | Liczba trajektorii |
+| `--t-max` | 10.0 | Czas symulacji [s] |
+| `--dt` | 0.01 | Krok czasowy [s] |
+| `--noise-std` | 0.01 | Szum pomiarowy |
+| `--undamped-ratio` | 0.0 | Proporcja trajektorii bez tłumienia (0.0-1.0) |
+
+Przy mieszanym datasecie generowane są dwa wykresy przykładowych trajektorii:
+- `sample_trajectory_damped.png` - oscylator tłumiony
+- `sample_trajectory_undamped.png` - oscylator bez tłumienia
 
 ### 2. Trening modelu
 
@@ -102,20 +119,18 @@ python main.py --mode train
 | `--num-layers` | 2 | Liczba warstw LSTM |
 | `--T-in` | 50 | Długość okna wejściowego |
 | `--T-out` | 50 | Horyzont predykcji |
-| `--teacher-forcing-ratio` | 1.0 | Początkowy współczynnik TF |
+| `--teacher-forcing-ratio` | 0.5 | Początkowy współczynnik TF |
 | `--gradient-clip` | 1.0 | Maksymalna norma gradientu |
 | `--early-stopping-patience` | 10 | Cierpliwość early stopping |
 
-**Przykład z niestandardowymi parametrami:**
+**Przykład treningu na mieszanym datasecie:**
 ```bash
 python main.py --mode train \
-    --max-epochs 200 \
-    --hidden-size 128 \
-    --num-layers 3 \
+    --max-epochs 100 \
     --T-in 100 \
-    --T-out 50 \
-    --batch-size 32 \
-    --learning-rate 0.0005
+    --T-out 100 \
+    --hidden-size 128 \
+    --batch-size 32
 ```
 
 ### 3. Ewaluacja modelu
@@ -130,10 +145,56 @@ Generuje:
 - Portret fazowy
 - Ewolucja niepewności
 
-### 4. Predykcja dla nowej trajektorii
+### 4. Predykcja (tryb testowy)
+
+Testuje model na **obu typach oscylatorów** (tłumiony i bez tłumienia) z losowymi parametrami:
 
 ```bash
-python main.py --mode predict --checkpoint outputs/run_*/checkpoints/best_model*.ckpt
+python main.py --mode predict --device cpu \
+    --checkpoint outputs/run_*/checkpoints/best.ckpt \
+    --T-in 100 --T-out 100 --dt 0.1 --t-max 50
+```
+
+**Parametry predykcji:**
+
+| Parametr | Domyślnie | Opis |
+|----------|-----------|------|
+| `--num-predictions` | 3 | Liczba predykcji na trajektorii |
+| `--recursive-steps` | 0 | Liczba kroków rekurencyjnych (0 = wyłączone) |
+| `--T-in` | 50 | Długość okna wejściowego |
+| `--T-out` | 50 | Horyzont predykcji |
+| `--t-max` | 10.0 | Długość trajektorii testowej [s] |
+| `--dt` | 0.01 | Krok czasowy [s] |
+
+**Przykład z predykcją rekurencyjną:**
+```bash
+python main.py --mode predict --device cpu \
+    --checkpoint outputs/run_*/checkpoints/best.ckpt \
+    --T-in 100 --T-out 100 --dt 0.1 --t-max 60 \
+    --num-predictions 3 --recursive-steps 5
+```
+
+**Struktura wyników predykcji:**
+```
+predictions/pred_YYYYMMDD_HHMMSS/
+├── parameters.txt
+├── damped/                          # Oscylator tłumiony
+│   ├── multi_prediction_position.png
+│   ├── multi_prediction_velocity.png
+│   ├── parameters.txt
+│   ├── zooms/                       # Zbliżenia każdej predykcji
+│   │   ├── zoom_1_position.png
+│   │   ├── zoom_1_velocity.png
+│   │   └── ...
+│   └── recursive/                   # Predykcja rekurencyjna
+│       ├── recursive_position.png
+│       └── recursive_velocity.png
+└── undamped/                        # Oscylator bez tłumienia
+    ├── multi_prediction_position.png
+    ├── multi_prediction_velocity.png
+    ├── parameters.txt
+    ├── zooms/
+    └── recursive/
 ```
 
 ## Przykładowy workflow
@@ -142,14 +203,22 @@ python main.py --mode predict --checkpoint outputs/run_*/checkpoints/best_model*
 # 1. Aktywacja środowiska
 source .venv/bin/activate
 
-# 2. Generacja danych (opcjonalne - trening automatycznie generuje dane)
-python main.py --mode generate --num-trajectories 1000
+# 2. Generacja mieszanego datasetu
+python main.py --mode generate \
+    --num-trajectories 1000 \
+    --undamped-ratio 0.5 \
+    --t-max 20 --dt 0.1
 
 # 3. Trening modelu
-python main.py --mode train --max-epochs 100
+python main.py --mode train \
+    --T-in 100 --T-out 100 \
+    --max-epochs 100
 
-# 4. Ewaluacja na zbiorze testowym
-python main.py --mode test --checkpoint outputs/run_*/checkpoints/best_model*.ckpt
+# 4. Predykcja (testuje oba typy oscylatorów)
+python main.py --mode predict --device cpu \
+    --checkpoint outputs/run_*/checkpoints/best.ckpt \
+    --T-in 100 --T-out 100 --dt 0.1 --t-max 50 \
+    --num-predictions 3 --recursive-steps 3
 ```
 
 ## Wyniki
@@ -167,9 +236,9 @@ outputs/run_20240131_123456/
 ├── plots/
 │   ├── prediction_position.png
 │   ├── prediction_velocity.png
-│   ├── prediction_comparison.png
+│   ├── full_trajectory_position.png
+│   ├── full_trajectory_velocity.png
 │   ├── phase_space.png
-│   ├── uncertainty_evolution.png
 │   └── training_curves.png
 ├── preprocessor_stats.npz
 └── metrics.txt
@@ -186,22 +255,21 @@ outputs/run_20240131_123456/
 | **Coverage 1σ** | % próbek w przedziale ±1σ (oczekiwane: 68.27%) |
 | **Coverage 2σ** | % próbek w przedziale ±2σ (oczekiwane: 95.45%) |
 
-## Konfiguracja
+## Typy oscylatorów
 
-Domyślne hiperparametry można modyfikować w `config/config.py`:
+### Oscylator tłumiony (DampedOscillator)
+Równanie ruchu: `m·x'' + c·x' + k·x = 0`
 
-```python
-@dataclass
-class TrainingConfig:
-    T_in: int = 50           # Długość okna wejściowego
-    T_out: int = 50          # Horyzont predykcji
-    batch_size: int = 64
-    learning_rate: float = 1e-3
-    max_epochs: int = 100
-    teacher_forcing_ratio: float = 1.0
-    teacher_forcing_decay: float = 0.02
-    gradient_clip_val: float = 1.0
-```
+- Oscylacje gasnące w czasie
+- Portret fazowy: spirala do środka
+- Parametry: masa (m), tłumienie (c), sztywność (k)
+
+### Oscylator prosty (SimpleHarmonicOscillator)
+Równanie ruchu: `m·x'' + k·x = 0` (c = 0)
+
+- Oscylacje stałe (niegasnące)
+- Portret fazowy: zamknięta elipsa
+- Parametry: masa (m), sztywność (k)
 
 ## Urządzenia obliczeniowe
 
@@ -229,42 +297,8 @@ python main.py --mode train --device mps       # Apple Silicon
 python main.py --mode train --device directml  # AMD/Intel na Windows
 ```
 
-### Sprawdzenie dostępnych urządzeń
-```python
-from config.config import print_device_info
-print_device_info()
-```
-
-### Instalacja PyTorch dla różnych platform
-
-**NVIDIA (CUDA) - Windows/Linux:**
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
-
-**AMD (ROCm) - Linux:**
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.0
-```
-
-**AMD/Intel (DirectML) - Windows:**
-```bash
-pip install torch torchvision
-pip install torch-directml
-python main.py --mode train --device directml
-```
-> **Uwaga:** Program automatycznie używa ręcznej pętli treningowej dla DirectML
-> (PyTorch Lightning nie wspiera DirectML). Funkcjonalność jest identyczna.
-
-**Apple Silicon (MPS) - macOS:**
-```bash
-pip install torch torchvision  # MPS jest domyślnie wspierany
-```
-
-**CPU - wszystkie platformy:**
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-```
+> **Uwaga:** Dla trybu `predict` na Windows z DirectML zalecane jest użycie `--device cpu`
+> ze względu na ograniczone wsparcie LSTM w DirectML.
 
 ## Rozwiązywanie problemów
 
@@ -284,6 +318,12 @@ python main.py --mode train --num-workers 4
 - Zmniejsz `learning_rate`
 - Zwiększ `teacher_forcing_ratio`
 - Sprawdź czy dane są poprawnie znormalizowane
+
+### Błąd DirectML w trybie predict
+Użyj CPU dla predykcji:
+```bash
+python main.py --mode predict --device cpu --checkpoint ...
+```
 
 ## Licencja
 
