@@ -41,10 +41,17 @@ from config.config import (
     print_device_info,
     is_directml_available,
 )
-from src.data_generation.synthetic import generate_dataset, save_dataset, load_dataset
+from src.data_generation.synthetic import (
+    generate_dataset, save_dataset, load_dataset,
+    generate_dimensionless_dataset, save_dimensionless_dataset, load_dimensionless_dataset,
+    DimensionlessOscillator
+)
 from src.preprocessing.preprocessor import DataPreprocessor
-from src.dataset.time_series_dataset import TimeSeriesDataModule
-from src.models.seq2seq import Seq2SeqModel
+from src.dataset.time_series_dataset import (
+    TimeSeriesDataModule,
+    ConditionedTimeSeriesDataModule
+)
+from src.models.seq2seq import Seq2SeqModel, ConditionedSeq2SeqModel
 from src.evaluation.metrics import compute_all_metrics
 from src.evaluation.visualization import (
     plot_prediction_with_uncertainty,
@@ -66,7 +73,7 @@ def parse_arguments() -> argparse.Namespace:
         Namespace z argumentami
     """
     parser = argparse.ArgumentParser(
-        description='Predykcja szeregów czasowych z użyciem modelu Seq2Seq LSTM',
+        description='Predykcja szeregow czasowych z uzyciem modelu Seq2Seq LSTM',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
@@ -76,7 +83,7 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         choices=['train', 'test', 'predict', 'generate'],
         default='train',
-        help='Tryb działania programu'
+        help='Tryb dzialania programu'
     )
 
     # Ścieżki
@@ -84,13 +91,13 @@ def parse_arguments() -> argparse.Namespace:
         '--data-path',
         type=str,
         default='data/synthetic/dataset.npz',
-        help='Ścieżka do pliku z danymi'
+        help='Sciezka do pliku z danymi'
     )
     parser.add_argument(
         '--checkpoint',
         type=str,
         default=None,
-        help='Ścieżka do checkpointu modelu (do wznowienia treningu lub ewaluacji)'
+        help='Sciezka do checkpointu modelu (do wznowienia treningu lub ewaluacji)'
     )
     parser.add_argument(
         '--num-predictions',
@@ -102,7 +109,7 @@ def parse_arguments() -> argparse.Namespace:
         '--recursive-steps',
         type=int,
         default=0,
-        help='Liczba kroków rekurencyjnych (0=wyłączony, >0=predykcja rekurencyjna)'
+        help='Liczba krokow rekurencyjnych (0=wylaczony, >0=predykcja rekurencyjna)'
     )
     parser.add_argument(
         '--output-dir',
@@ -140,7 +147,7 @@ def parse_arguments() -> argparse.Namespace:
         '--undamped-ratio',
         type=float,
         default=0.0,
-        help='Proporcja trajektorii bez tłumienia (0.0-1.0, np. 0.5 = 50%%)'
+        help='Proporcja trajektorii bez tlumienia (0.0-1.0, np. 0.5 = 50%%)'
     )
 
     # Parametry okien czasowych
@@ -148,13 +155,13 @@ def parse_arguments() -> argparse.Namespace:
         '--T-in',
         type=int,
         default=50,
-        help='Długość okna wejściowego (historia)'
+        help='Dlugosc okna wejsciowego (historia)'
     )
     parser.add_argument(
         '--T-out',
         type=int,
         default=50,
-        help='Długość horyzontu predykcji'
+        help='Dlugosc horyzontu predykcji'
     )
 
     # Parametry modelu
@@ -174,7 +181,7 @@ def parse_arguments() -> argparse.Namespace:
         '--dropout',
         type=float,
         default=0.1,
-        help='Współczynnik dropout'
+        help='Wspolczynnik dropout'
     )
 
     # Parametry treningu
@@ -188,7 +195,7 @@ def parse_arguments() -> argparse.Namespace:
         '--learning-rate',
         type=float,
         default=1e-3,
-        help='Współczynnik uczenia'
+        help='Wspolczynnik uczenia'
     )
     parser.add_argument(
         '--max-epochs',
@@ -200,13 +207,13 @@ def parse_arguments() -> argparse.Namespace:
         '--teacher-forcing-ratio',
         type=float,
         default=0.5,
-        help='Początkowy współczynnik teacher forcing (0.5 = 50%% szans na użycie prawdziwej wartości)'
+        help='Poczatkowy wspolczynnik teacher forcing (0.5 = 50%% szans na uzycie prawdziwej wartosci)'
     )
     parser.add_argument(
         '--teacher-forcing-decay',
         type=float,
         default=0.05,
-        help='Spadek teacher forcing na epokę (szybszy decay = lepsza generalizacja)'
+        help='Spadek teacher forcing na epoke (szybszy decay = lepsza generalizacja)'
     )
     parser.add_argument(
         '--gradient-clip',
@@ -218,7 +225,42 @@ def parse_arguments() -> argparse.Namespace:
         '--early-stopping-patience',
         type=int,
         default=10,
-        help='Cierpliwość dla early stopping'
+        help='Cierpliwosc dla early stopping'
+    )
+
+    # Parametryzacja bezwymiarowa
+    parser.add_argument(
+        '--dimensionless',
+        action='store_true',
+        help='Uzyj parametryzacji bezwymiarowej (tau = omega0*t, dynamika zalezy tylko od zeta)'
+    )
+    parser.add_argument(
+        '--zeta-range',
+        type=float,
+        nargs=2,
+        default=[0.0, 0.5],
+        metavar=('MIN', 'MAX'),
+        help='Zakres wspolczynnika tlumienia zeta dla parametryzacji bezwymiarowej'
+    )
+    parser.add_argument(
+        '--omega0-range',
+        type=float,
+        nargs=2,
+        default=[1.0, 20.0],
+        metavar=('MIN', 'MAX'),
+        help='Zakres czestosci wlasnej omega0 [rad/s] dla parametryzacji bezwymiarowej'
+    )
+    parser.add_argument(
+        '--tau-max',
+        type=float,
+        default=50.0,
+        help='Maksymalny czas bezwymiarowy tau (dla --dimensionless)'
+    )
+    parser.add_argument(
+        '--dtau',
+        type=float,
+        default=0.1,
+        help='Krok czasowy bezwymiarowy dtau (dla --dimensionless)'
     )
 
     # Inne
@@ -233,13 +275,13 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default='auto',
         choices=['auto', 'cpu', 'cuda', 'mps', 'directml'],
-        help='Urządzenie obliczeniowe (directml dla AMD na Windows)'
+        help='Urzadzenie obliczeniowe (directml dla AMD na Windows)'
     )
     parser.add_argument(
         '--num-workers',
         type=int,
         default=4,
-        help='Liczba procesów do ładowania danych (0 = główny wątek, zalecane 4-8 dla GPU)'
+        help='Liczba procesow do ladowania danych (0 = glowny watek, zalecane 4-8 dla GPU)'
     )
 
     return parser.parse_args()
@@ -279,6 +321,185 @@ def get_accelerator(device: str) -> str:
     return config["accelerator"]
 
 
+def generate_dimensionless_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
+    """
+    Generuje dane syntetyczne w parametryzacji bezwymiarowej.
+
+    Równanie bezwymiarowe: d²x/dτ² + 2ζ(dx/dτ) + x = 0
+    Stałe warunki początkowe: x(0)=1, dx/dτ(0)=0
+    Dynamika zależy TYLKO od ζ.
+
+    Args:
+        args: Argumenty wiersza poleceń
+
+    Returns:
+        Słownik z wygenerowanymi danymi
+    """
+    print("\n" + "=" * 60)
+    print("GENERACJA DANYCH BEZWYMIAROWYCH")
+    print("=" * 60)
+
+    # Tworzenie katalogu
+    data_dir = Path(args.data_path).parent
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generowanie danych
+    print(f"\nGenerowanie {args.num_trajectories} trajektorii bezwymiarowych...")
+    print(f"  - Czas bezwymiarowy tau_max: {args.tau_max}")
+    print(f"  - Krok czasowy dtau: {args.dtau}")
+    print(f"  - Zakres zeta: [{args.zeta_range[0]}, {args.zeta_range[1]}]")
+    print(f"  - Zakres omega0: [{args.omega0_range[0]}, {args.omega0_range[1]}] rad/s")
+    print(f"  - Szum pomiarowy: sigma = {args.noise_std}")
+    print(f"  - Stale warunki poczatkowe: x0=1, dx/dtau(0)=0")
+
+    dataset = generate_dimensionless_dataset(
+        num_trajectories=args.num_trajectories,
+        dtau=args.dtau,
+        tau_max=args.tau_max,
+        zeta_range=tuple(args.zeta_range),
+        omega_0_range=tuple(args.omega0_range),
+        noise_std=args.noise_std,
+        seed=args.seed
+    )
+
+    # Zapisanie do pliku
+    save_dimensionless_dataset(dataset, args.data_path)
+    print(f"\nDane zapisane do: {args.data_path}")
+    print(f"Ksztalt danych: {dataset['trajectories'].shape}")
+
+    # Wizualizacja przykładowych trajektorii
+    print("\nGenerowanie wykresow przykladowych trajektorii...")
+    plot_dimensionless_trajectory(dataset, data_dir)
+
+    return dataset
+
+
+def plot_dimensionless_trajectory(
+    dataset: Dict[str, np.ndarray],
+    output_dir: Path
+) -> None:
+    """
+    Generuje wykres trajektorii bezwymiarowej.
+
+    Args:
+        dataset: Słownik z danymi (trajectories, tau, params)
+        output_dir: Katalog na zapis wykresu
+    """
+    import matplotlib.pyplot as plt
+
+    # Wybór kilku trajektorii o różnych ζ
+    params = dataset['params']
+    zetas = params[:, 0]
+
+    # Sortowanie po ζ i wybór kilku reprezentatywnych
+    sorted_indices = np.argsort(zetas)
+    num_to_plot = min(5, len(sorted_indices))
+    step = len(sorted_indices) // num_to_plot
+    selected_indices = sorted_indices[::step][:num_to_plot]
+
+    tau = dataset['tau']
+    trajectories = dataset['trajectories']
+
+    # Tworzenie wykresu 2x2
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle('Trajektorie bezwymiarowe oscylatora', fontsize=14, fontweight='bold')
+
+    colors = plt.cm.viridis(np.linspace(0, 1, num_to_plot))
+
+    # 1. Położenie w czasie bezwymiarowym
+    for i, idx in enumerate(selected_indices):
+        zeta = params[idx, 0]
+        x = trajectories[idx, :, 0]
+        axes[0, 0].plot(tau, x, color=colors[i], linewidth=1.2, label=f'ζ={zeta:.3f}')
+
+    axes[0, 0].set_xlabel('Czas bezwymiarowy τ = ω₀·t')
+    axes[0, 0].set_ylabel('Położenie x')
+    axes[0, 0].set_title('Położenie vs czas bezwymiarowy')
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].legend(loc='upper right')
+    axes[0, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+
+    # 2. Prędkość bezwymiarowa
+    for i, idx in enumerate(selected_indices):
+        zeta = params[idx, 0]
+        v = trajectories[idx, :, 1]
+        axes[0, 1].plot(tau, v, color=colors[i], linewidth=1.2, label=f'ζ={zeta:.3f}')
+
+    axes[0, 1].set_xlabel('Czas bezwymiarowy τ')
+    axes[0, 1].set_ylabel('Prędkość dx/dτ')
+    axes[0, 1].set_title('Prędkość bezwymiarowa vs czas')
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].legend(loc='upper right')
+    axes[0, 1].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+
+    # 3. Portret fazowy
+    for i, idx in enumerate(selected_indices):
+        zeta = params[idx, 0]
+        x = trajectories[idx, :, 0]
+        v = trajectories[idx, :, 1]
+        axes[1, 0].plot(x, v, color=colors[i], linewidth=1.2, label=f'ζ={zeta:.3f}')
+
+    axes[1, 0].plot(1.0, 0.0, 'ko', markersize=8, label='Start (1, 0)')
+    axes[1, 0].set_xlabel('Położenie x')
+    axes[1, 0].set_ylabel('Prędkość dx/dτ')
+    axes[1, 0].set_title('Portret fazowy (przestrzeń stanów)')
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].legend(loc='upper right')
+    axes[1, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+    axes[1, 0].axvline(x=0, color='k', linestyle='-', linewidth=0.5)
+
+    # 4. Informacje
+    axes[1, 1].axis('off')
+
+    # Zakres parametrow z datasetu
+    zeta_min, zeta_max = zetas.min(), zetas.max()
+    omega0_min, omega0_max = params[:, 1].min(), params[:, 1].max()
+
+    info_text = f"""
+    PARAMETRYZACJA BEZWYMIAROWA
+    ====================================
+
+    Rownanie ruchu:
+    d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0
+
+    gdzie tau = omega0*t jest czasem bezwymiarowym.
+
+    Warunki poczatkowe (STALE):
+    -------------------------------------
+    Polozenie: x(0) = 1
+    Predkosc:  dx/dtau(0) = 0
+
+    Kluczowa wlasnosc:
+    -------------------------------------
+    Dla stalych warunkow poczatkowych
+    dynamika zalezy TYLKO od zeta!
+
+    Zakres parametrow:
+    -------------------------------------
+    zeta: [{zeta_min:.3f}, {zeta_max:.3f}]
+    omega0: [{omega0_min:.1f}, {omega0_max:.1f}] rad/s
+
+    Korzysci:
+    -------------------------------------
+    * Model uczy sie uniwersalnych zaleznosci
+    * Lepsza generalizacja
+    * Jeden parametr sterujacy dynamika
+    """
+
+    axes[1, 1].text(0.05, 0.95, info_text, transform=axes[1, 1].transAxes,
+                    fontsize=10, verticalalignment='top', fontfamily='monospace',
+                    bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+
+    plt.tight_layout()
+
+    # Zapis wykresu
+    plot_path = output_dir / 'dimensionless_trajectories.png'
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    print(f"  Wykres zapisany: {plot_path}")
+
+
 def generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     """
     Generuje dane syntetyczne i zapisuje do pliku.
@@ -301,7 +522,7 @@ def generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     print(f"\nGenerowanie {args.num_trajectories} trajektorii...")
     print(f"  - Czas symulacji: {args.t_max} s")
     print(f"  - Krok czasowy: {args.dt} s")
-    print(f"  - Szum pomiarowy: σ = {args.noise_std}")
+    print(f"  - Szum pomiarowy: sigma = {args.noise_std}")
     if args.undamped_ratio > 0:
         num_undamped = int(args.num_trajectories * args.undamped_ratio)
         num_damped = args.num_trajectories - num_undamped
@@ -320,10 +541,10 @@ def generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     # Zapisanie do pliku
     save_dataset(dataset, args.data_path)
     print(f"\nDane zapisane do: {args.data_path}")
-    print(f"Kształt danych: {dataset['trajectories'].shape}")
+    print(f"Ksztalt danych: {dataset['trajectories'].shape}")
 
     # Wizualizacja przykładowych trajektorii
-    print("\nGenerowanie wykresów przykładowych trajektorii...")
+    print("\nGenerowanie wykresow przykladowych trajektorii...")
     if args.undamped_ratio > 0 and args.undamped_ratio < 1.0:
         # Mieszany dataset - zapisz oba typy
         plot_sample_trajectory(dataset, data_dir, trajectory_type='damped', filename_suffix='_damped')
@@ -486,6 +707,8 @@ def load_or_generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     """
     Ładuje dane z pliku lub generuje nowe jeśli plik nie istnieje.
 
+    Obsługuje zarówno dane wymiarowe jak i bezwymiarowe.
+
     Args:
         args: Argumenty wiersza poleceń
 
@@ -494,14 +717,24 @@ def load_or_generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
     """
     if Path(args.data_path).exists():
         print(f"\nŁadowanie danych z: {args.data_path}")
-        dataset = load_dataset(args.data_path)
-        print(f"Załadowano dane o kształcie: {dataset['trajectories'].shape}")
-        # Wizualizacja przykładowej trajektorii
-        data_dir = Path(args.data_path).parent
-        plot_sample_trajectory(dataset, data_dir)
+
+        if args.dimensionless:
+            dataset = load_dimensionless_dataset(args.data_path)
+            print(f"Załadowano dane bezwymiarowe o kształcie: {dataset['trajectories'].shape}")
+            data_dir = Path(args.data_path).parent
+            plot_dimensionless_trajectory(dataset, data_dir)
+        else:
+            dataset = load_dataset(args.data_path)
+            print(f"Załadowano dane o kształcie: {dataset['trajectories'].shape}")
+            data_dir = Path(args.data_path).parent
+            plot_sample_trajectory(dataset, data_dir)
     else:
         print(f"\nPlik {args.data_path} nie istnieje - generowanie nowych danych...")
-        dataset = generate_data(args)
+
+        if args.dimensionless:
+            dataset = generate_dimensionless_data(args)
+        else:
+            dataset = generate_data(args)
 
     return dataset
 
@@ -509,59 +742,98 @@ def load_or_generate_data(args: argparse.Namespace) -> Dict[str, np.ndarray]:
 def create_datamodule(
     trajectories: np.ndarray,
     args: argparse.Namespace,
-    preprocessor: DataPreprocessor
-) -> TimeSeriesDataModule:
+    preprocessor: DataPreprocessor,
+    params: Optional[np.ndarray] = None
+) -> pl.LightningDataModule:
     """
     Tworzy DataModule z przetworzonymi danymi.
+
+    Obsługuje zarówno dane wymiarowe jak i bezwymiarowe (z parametrami).
 
     Args:
         trajectories: Surowe trajektorie
         args: Argumenty wiersza poleceń
         preprocessor: Dopasowany preprocessor
+        params: Parametry warunkujące (dla trybu bezwymiarowego)
 
     Returns:
-        TimeSeriesDataModule
+        TimeSeriesDataModule lub ConditionedTimeSeriesDataModule
     """
     # Normalizacja danych
     normalized = preprocessor.transform(trajectories)
 
-    # Tworzenie DataModule
-    datamodule = TimeSeriesDataModule(
-        data=normalized,
-        T_in=args.T_in,
-        T_out=args.T_out,
-        batch_size=args.batch_size,
-        train_ratio=0.7,
-        val_ratio=0.15,
-        stride=1,
-        num_workers=args.num_workers,
-        seed=args.seed
-    )
+    if args.dimensionless and params is not None:
+        # Tworzenie DataModule z parametrami warunkującymi
+        datamodule = ConditionedTimeSeriesDataModule(
+            data=normalized,
+            params=params,
+            T_in=args.T_in,
+            T_out=args.T_out,
+            batch_size=args.batch_size,
+            train_ratio=0.7,
+            val_ratio=0.15,
+            stride=1,
+            num_workers=args.num_workers,
+            seed=args.seed,
+            normalize_params=True
+        )
+    else:
+        # Standardowy DataModule
+        datamodule = TimeSeriesDataModule(
+            data=normalized,
+            T_in=args.T_in,
+            T_out=args.T_out,
+            batch_size=args.batch_size,
+            train_ratio=0.7,
+            val_ratio=0.15,
+            stride=1,
+            num_workers=args.num_workers,
+            seed=args.seed
+        )
 
     return datamodule
 
 
-def create_model(args: argparse.Namespace) -> Seq2SeqModel:
+def create_model(args: argparse.Namespace) -> pl.LightningModule:
     """
     Tworzy model Seq2Seq.
+
+    Obsługuje zarówno standardowy model jak i model z conditioningiem
+    (dla parametryzacji bezwymiarowej).
 
     Args:
         args: Argumenty wiersza poleceń
 
     Returns:
-        Model Seq2Seq
+        Model Seq2Seq lub ConditionedSeq2Seq
     """
-    model = Seq2SeqModel(
-        input_size=2,  # [x, v]
-        hidden_size=args.hidden_size,
-        num_layers=args.num_layers,
-        T_out=args.T_out,
-        dropout=args.dropout,
-        learning_rate=args.learning_rate,
-        teacher_forcing_ratio=args.teacher_forcing_ratio,
-        teacher_forcing_decay=args.teacher_forcing_decay,
-        gradient_clip_val=args.gradient_clip
-    )
+    if args.dimensionless:
+        # Model z parametrami warunkującymi [zeta, omega_0]
+        model = ConditionedSeq2SeqModel(
+            input_size=2,  # [x, dx/dτ]
+            hidden_size=args.hidden_size,
+            num_layers=args.num_layers,
+            T_out=args.T_out,
+            param_size=2,  # [zeta, omega_0]
+            dropout=args.dropout,
+            learning_rate=args.learning_rate,
+            teacher_forcing_ratio=args.teacher_forcing_ratio,
+            teacher_forcing_decay=args.teacher_forcing_decay,
+            gradient_clip_val=args.gradient_clip
+        )
+    else:
+        # Standardowy model
+        model = Seq2SeqModel(
+            input_size=2,  # [x, v]
+            hidden_size=args.hidden_size,
+            num_layers=args.num_layers,
+            T_out=args.T_out,
+            dropout=args.dropout,
+            learning_rate=args.learning_rate,
+            teacher_forcing_ratio=args.teacher_forcing_ratio,
+            teacher_forcing_decay=args.teacher_forcing_decay,
+            gradient_clip_val=args.gradient_clip
+        )
 
     return model
 
@@ -629,11 +901,16 @@ def train(args: argparse.Namespace) -> None:
     """
     Przeprowadza trening modelu z użyciem PyTorch Lightning.
 
+    Obsługuje zarówno dane wymiarowe jak i bezwymiarowe.
+
     Args:
         args: Argumenty wiersza poleceń
     """
     print("\n" + "=" * 60)
-    print("TRENING MODELU")
+    if args.dimensionless:
+        print("TRENING MODELU - PARAMETRYZACJA BEZWYMIAROWA")
+    else:
+        print("TRENING MODELU")
     print("=" * 60)
 
     # Ustawienie ziarna
@@ -641,7 +918,8 @@ def train(args: argparse.Namespace) -> None:
 
     # Tworzenie katalogu wyjściowego
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(args.output_dir) / f'run_{timestamp}'
+    suffix = '_dimensionless' if args.dimensionless else ''
+    output_dir = Path(args.output_dir) / f'run_{timestamp}{suffix}'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nKatalog wyjściowy: {output_dir}")
@@ -649,6 +927,9 @@ def train(args: argparse.Namespace) -> None:
     # Ładowanie/generowanie danych
     dataset = load_or_generate_data(args)
     trajectories = dataset['trajectories']
+
+    # Parametry warunkujące (dla trybu bezwymiarowego)
+    params = dataset.get('params', None)
 
     # Preprocessing
     print("\nPreprocessing danych...")
@@ -660,14 +941,20 @@ def train(args: argparse.Namespace) -> None:
 
     # DataModule
     print("\nTworzenie DataModule...")
-    datamodule = create_datamodule(trajectories, args, preprocessor)
+    datamodule = create_datamodule(trajectories, args, preprocessor, params)
     datamodule.setup()
+
+    # Zapisanie statystyk normalizacji parametrów (dla trybu bezwymiarowego)
+    if args.dimensionless and hasattr(datamodule, 'save_params_stats'):
+        datamodule.save_params_stats(str(output_dir / 'params_stats.npz'))
 
     info = datamodule.get_data_info()
     print(f"  - Trajektorie: {info['num_trajectories']}")
     print(f"  - Próbki treningowe: {info['train_samples']}")
     print(f"  - Próbki walidacyjne: {info['val_samples']}")
     print(f"  - Próbki testowe: {info['test_samples']}")
+    if args.dimensionless:
+        print(f"  - Rozmiar parametrów: {info.get('param_size', 'N/A')}")
 
     # Model
     print("\nTworzenie modelu...")
@@ -713,11 +1000,16 @@ def test(args: argparse.Namespace) -> None:
     """
     Przeprowadza ewaluację modelu na zbiorze testowym.
 
+    Obsługuje zarówno dane wymiarowe jak i bezwymiarowe.
+
     Args:
         args: Argumenty wiersza poleceń
     """
     print("\n" + "=" * 60)
-    print("EWALUACJA MODELU")
+    if args.dimensionless:
+        print("EWALUACJA MODELU - PARAMETRYZACJA BEZWYMIAROWA")
+    else:
+        print("EWALUACJA MODELU")
     print("=" * 60)
 
     if args.checkpoint is None:
@@ -728,12 +1020,14 @@ def test(args: argparse.Namespace) -> None:
     setup_seed(args.seed)
 
     # Tworzenie katalogu wyjściowego
-    output_dir = Path(args.output_dir) / 'evaluation'
+    suffix = '_dimensionless' if args.dimensionless else ''
+    output_dir = Path(args.output_dir) / f'evaluation{suffix}'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Ładowanie danych
     dataset = load_or_generate_data(args)
     trajectories = dataset['trajectories']
+    params = dataset.get('params', None)
 
     # Preprocessor
     checkpoint_dir = Path(args.checkpoint).parent.parent
@@ -748,12 +1042,22 @@ def test(args: argparse.Namespace) -> None:
         preprocessor.fit(trajectories)
 
     # DataModule
-    datamodule = create_datamodule(trajectories, args, preprocessor)
+    datamodule = create_datamodule(trajectories, args, preprocessor, params)
+
+    # Ładowanie statystyk normalizacji parametrów (dla trybu bezwymiarowego)
+    if args.dimensionless:
+        params_stats_path = checkpoint_dir / 'params_stats.npz'
+        if params_stats_path.exists() and hasattr(datamodule, 'load_params_stats'):
+            datamodule.load_params_stats(str(params_stats_path))
+
     datamodule.setup('test')
 
     # Model
     print(f"\nŁadowanie modelu z: {args.checkpoint}")
-    model = Seq2SeqModel.load_from_checkpoint(args.checkpoint)
+    if args.dimensionless:
+        model = ConditionedSeq2SeqModel.load_from_checkpoint(args.checkpoint)
+    else:
+        model = Seq2SeqModel.load_from_checkpoint(args.checkpoint)
     model.eval()
 
     # Ewaluacja
@@ -1406,8 +1710,8 @@ def predict(args: argparse.Namespace) -> None:
     print(f"\nParametry bazowe oscylatora:")
     print(f"  - masa (m): {base_params['mass']}")
     print(f"  - sztywność (k): {base_params['stiffness']}")
-    print(f"  - x₀: {base_params['x0']}")
-    print(f"  - v₀: {base_params['v0']}")
+    print(f"  - x0: {base_params['x0']}")
+    print(f"  - v0: {base_params['v0']}")
 
     # Test dla oscylatora TŁUMIONEGO
     print("\n" + "-" * 40)
@@ -1501,11 +1805,14 @@ def main() -> None:
     # Informacje o urządzeniu (obsługa NVIDIA/AMD/Apple Silicon)
     print_device_info()
     device = get_device(args.device)
-    print(f"Wybrane urządzenie: {device}")
+    print(f"Wybrane urzadzenie: {device}")
 
     # Wykonanie odpowiedniego trybu
     if args.mode == 'generate':
-        generate_data(args)
+        if args.dimensionless:
+            generate_dimensionless_data(args)
+        else:
+            generate_data(args)
     elif args.mode == 'train':
         train(args)
     elif args.mode == 'test':
@@ -1514,7 +1821,7 @@ def main() -> None:
         predict(args)
 
     print("\n" + "=" * 60)
-    print("ZAKOŃCZONO")
+    print("ZAKONCZONE")
     print("=" * 60 + "\n")
 
 

@@ -21,6 +21,34 @@ from scipy.integrate import odeint
 
 
 @dataclass
+class DimensionlessParams:
+    """
+    Parametry bezwymiarowe oscylatora.
+
+    Równanie bezwymiarowe: d²x/dτ² + 2ζ(dx/dτ) + x = 0
+    gdzie τ = ω₀·t jest czasem bezwymiarowym.
+
+    Attributes:
+        zeta: Współczynnik tłumienia bezwymiarowy ζ ∈ [0, 1)
+        omega_0: Częstość własna nietłumiona [rad/s] (do przeliczenia czasu)
+    """
+    zeta: float
+    omega_0: float
+
+    @property
+    def is_underdamped(self) -> bool:
+        """Czy układ jest podkrytycznie tłumiony (oscylacje gasnące)."""
+        return self.zeta < 1.0
+
+    @property
+    def omega_d_normalized(self) -> float:
+        """Znormalizowana częstość tłumiona (w czasie bezwymiarowym)."""
+        if self.zeta >= 1.0:
+            return 0.0
+        return np.sqrt(1 - self.zeta**2)
+
+
+@dataclass
 class OscillatorParams:
     """
     Parametry fizyczne oscylatora tłumionego.
@@ -183,6 +211,112 @@ class SimpleHarmonicOscillator(DampedOscillator):
         super().__init__(mass=mass, damping=0.0, stiffness=stiffness)
 
 
+class DimensionlessOscillator:
+    """
+    Oscylator w parametryzacji bezwymiarowej.
+
+    Równanie ruchu w czasie bezwymiarowym τ = ω₀·t:
+        d²x/dτ² + 2ζ(dx/dτ) + x = 0
+
+    Stałe warunki początkowe: x(0)=1, dx/dτ(0)=0
+
+    Korzyści:
+    - Dla stałych warunków początkowych dynamika zależy TYLKO od ζ
+    - Model uczy się uniwersalnych zależności w przestrzeni bezwymiarowej
+    - Lepsza generalizacja na różne układy fizyczne
+
+    Attributes:
+        params: Parametry bezwymiarowe oscylatora (ζ, ω₀)
+    """
+
+    def __init__(
+        self,
+        zeta: float = 0.1,
+        omega_0: float = 1.0
+    ):
+        """
+        Inicjalizacja oscylatora bezwymiarowego.
+
+        Args:
+            zeta: Współczynnik tłumienia bezwymiarowy ζ ∈ [0, 1)
+            omega_0: Częstość własna nietłumiona [rad/s]
+        """
+        if zeta < 0:
+            raise ValueError("Współczynnik tłumienia ζ musi być nieujemny")
+        if omega_0 <= 0:
+            raise ValueError("Częstość własna ω₀ musi być dodatnia")
+
+        self.params = DimensionlessParams(zeta=zeta, omega_0=omega_0)
+
+    def _equations_of_motion(
+        self,
+        state: np.ndarray,
+        tau: float
+    ) -> List[float]:
+        """
+        Równania ruchu w postaci bezwymiarowej.
+
+        Przekształcenie:
+            dx/dτ = v_τ
+            dv_τ/dτ = -2ζ·v_τ - x
+
+        Args:
+            state: Wektor stanu [x, v_τ] gdzie v_τ = dx/dτ
+            tau: Czas bezwymiarowy (nieużywany, wymagany przez odeint)
+
+        Returns:
+            Lista pochodnych [dx/dτ, dv_τ/dτ]
+        """
+        x, v_tau = state
+        dxdtau = v_tau
+        dvdtau = -2 * self.params.zeta * v_tau - x
+        return [dxdtau, dvdtau]
+
+    def generate_trajectory(
+        self,
+        tau: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Generuje trajektorię w czasie bezwymiarowym.
+
+        Warunki początkowe są stałe: x(0)=1, dx/dτ(0)=0
+        Dzięki temu dynamika zależy tylko od ζ.
+
+        Args:
+            tau: Wektor czasu bezwymiarowego τ = ω₀·t
+
+        Returns:
+            Tuple zawierający:
+                - x: Wektor położeń (bezwymiarowych)
+                - v_tau: Wektor prędkości bezwymiarowych (dx/dτ)
+        """
+        # Stałe warunki początkowe - kluczowa cecha parametryzacji bezwymiarowej
+        initial_state = [1.0, 0.0]  # x₀=1, v₀=0
+
+        solution = odeint(self._equations_of_motion, initial_state, tau)
+
+        x = solution[:, 0]
+        v_tau = solution[:, 1]
+
+        return x, v_tau
+
+    def generate_state_space(
+        self,
+        tau: np.ndarray
+    ) -> np.ndarray:
+        """
+        Generuje trajektorię w przestrzeni stanów [x, dx/dτ].
+
+        Args:
+            tau: Wektor czasu bezwymiarowego
+
+        Returns:
+            Macierz stanów o wymiarach (len(tau), 2)
+        """
+        x, v_tau = self.generate_trajectory(tau)
+        return np.column_stack([x, v_tau])
+
+
 def add_noise(
     data: np.ndarray,
     noise_std: float = 0.01,
@@ -331,6 +465,125 @@ def generate_dataset(
         'trajectories': trajectories,
         'time': t,
         'params': params_list
+    }
+
+
+def generate_dimensionless_dataset(
+    num_trajectories: int = 1000,
+    dtau: float = 0.1,
+    tau_max: float = 50.0,
+    zeta_range: Tuple[float, float] = (0.0, 0.5),
+    omega_0_range: Tuple[float, float] = (1.0, 20.0),
+    noise_std: float = 0.01,
+    seed: Optional[int] = None
+) -> Dict[str, np.ndarray]:
+    """
+    Generuje zbiór danych w parametryzacji bezwymiarowej.
+
+    Każda trajektoria jest generowana z losowym ζ z zadanego zakresu.
+    Warunki początkowe są stałe: x(0)=1, dx/dτ(0)=0.
+
+    Korzyści:
+    - Dynamika zależy tylko od ζ (jeden parametr!)
+    - Model uczy się uniwersalnych zależności
+    - Lepsza generalizacja
+
+    Args:
+        num_trajectories: Liczba trajektorii do wygenerowania
+        dtau: Krok czasowy bezwymiarowy (τ = ω₀·t)
+        tau_max: Maksymalny czas bezwymiarowy
+        zeta_range: Zakres współczynnika tłumienia (min, max), typowo [0, 0.5]
+        omega_0_range: Zakres częstości własnej (min, max) [rad/s] - do metadanych
+        noise_std: Odchylenie standardowe szumu pomiarowego
+        seed: Ziarno generatora losowego
+
+    Returns:
+        Słownik zawierający:
+            - 'trajectories': Macierz trajektorii (num_traj, num_steps, 2) - [x, dx/dτ]
+            - 'tau': Wektor czasu bezwymiarowego (num_steps,)
+            - 'params': Macierz parametrów (num_traj, 2) - [zeta, omega_0]
+            - 'params_list': Lista słowników z pełnymi parametrami
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    # Wektor czasu bezwymiarowego
+    tau = np.arange(0, tau_max, dtau)
+    num_steps = len(tau)
+
+    # Inicjalizacja macierzy
+    trajectories = np.zeros((num_trajectories, num_steps, 2))
+    params_array = np.zeros((num_trajectories, 2))
+    params_list = []
+
+    for i in range(num_trajectories):
+        # Losowanie parametrów
+        zeta = np.random.uniform(*zeta_range)
+        omega_0 = np.random.uniform(*omega_0_range)
+
+        # Tworzenie oscylatora i generowanie trajektorii
+        oscillator = DimensionlessOscillator(zeta=zeta, omega_0=omega_0)
+        state = oscillator.generate_state_space(tau)
+
+        # Dodanie szumu
+        if noise_std > 0:
+            state = add_noise(state, noise_std)
+
+        trajectories[i] = state
+        params_array[i] = [zeta, omega_0]
+
+        # Słownik parametrów dla kompatybilności
+        params_list.append({
+            'zeta': zeta,
+            'omega_0': omega_0,
+            'x0': 1.0,  # Stałe warunki początkowe
+            'v0': 0.0,
+            'type': 'dimensionless',
+            'is_underdamped': zeta < 1.0
+        })
+
+    return {
+        'trajectories': trajectories,
+        'tau': tau,
+        'params': params_array,
+        'params_list': params_list
+    }
+
+
+def save_dimensionless_dataset(
+    dataset: Dict[str, np.ndarray],
+    filepath: str
+) -> None:
+    """
+    Zapisuje zbiór danych bezwymiarowych do pliku .npz.
+
+    Args:
+        dataset: Słownik z danymi (z funkcji generate_dimensionless_dataset)
+        filepath: Ścieżka do pliku wyjściowego
+    """
+    np.savez(
+        filepath,
+        trajectories=dataset['trajectories'],
+        tau=dataset['tau'],
+        params=dataset['params']
+    )
+
+
+def load_dimensionless_dataset(filepath: str) -> Dict[str, np.ndarray]:
+    """
+    Wczytuje zbiór danych bezwymiarowych z pliku .npz.
+
+    Args:
+        filepath: Ścieżka do pliku wejściowego
+
+    Returns:
+        Słownik z danymi
+    """
+    data = np.load(filepath)
+    return {
+        'trajectories': data['trajectories'],
+        'tau': data['tau'],
+        'params': data['params']
     }
 
 

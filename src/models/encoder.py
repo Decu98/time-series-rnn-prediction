@@ -18,12 +18,16 @@ class LSTMEncoder(nn.Module):
     Przetwarza sekwencję wejściową i zwraca końcowe stany
     (hidden state i cell state) reprezentujące zakodowany kontekst.
 
+    Obsługuje opcjonalne parametry warunkujące (conditioning), które
+    są konkatenowane do wejścia w każdym kroku czasowym.
+
     Attributes:
         input_size: Liczba cech wejściowych
         hidden_size: Rozmiar warstwy ukrytej
         num_layers: Liczba warstw LSTM
         dropout: Współczynnik dropout między warstwami
         bidirectional: Czy LSTM ma być dwukierunkowy
+        param_size: Rozmiar wektora parametrów warunkujących (0 = brak)
     """
 
     def __init__(
@@ -32,7 +36,8 @@ class LSTMEncoder(nn.Module):
         hidden_size: int,
         num_layers: int = 2,
         dropout: float = 0.1,
-        bidirectional: bool = False
+        bidirectional: bool = False,
+        param_size: int = 0
     ):
         """
         Inicjalizacja encodera.
@@ -43,6 +48,8 @@ class LSTMEncoder(nn.Module):
             num_layers: Liczba warstw LSTM
             dropout: Współczynnik dropout (stosowany między warstwami)
             bidirectional: Czy używać dwukierunkowego LSTM
+            param_size: Rozmiar wektora parametrów warunkujących (0 = brak)
+                       Np. 2 dla [zeta, omega_0] w parametryzacji bezwymiarowej
         """
         super().__init__()
 
@@ -52,10 +59,14 @@ class LSTMEncoder(nn.Module):
         self.dropout = dropout
         self.bidirectional = bidirectional
         self.num_directions = 2 if bidirectional else 1
+        self.param_size = param_size
 
-        # Warstwa LSTM
+        # Efektywny rozmiar wejścia LSTM (z parametrami warunkującymi)
+        effective_input_size = input_size + param_size
+
+        # Warstwa LSTM z rozszerzonym wejściem
         self.lstm = nn.LSTM(
-            input_size=input_size,
+            input_size=effective_input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
@@ -83,7 +94,8 @@ class LSTMEncoder(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        hidden: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        params: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Przetwarzanie sekwencji wejściowej przez encoder.
@@ -91,6 +103,9 @@ class LSTMEncoder(nn.Module):
         Args:
             x: Tensor wejściowy (batch_size, seq_len, input_size)
             hidden: Opcjonalny początkowy stan ukryty (h_0, c_0)
+            params: Opcjonalne parametry warunkujące (batch_size, param_size)
+                   Np. [zeta, omega_0] dla parametryzacji bezwymiarowej.
+                   Jeśli podane, są konkatenowane do wejścia w każdym kroku.
 
         Returns:
             Tuple zawierający:
@@ -98,6 +113,15 @@ class LSTMEncoder(nn.Module):
                 - (h_n, c_n): Końcowe stany ukryte (dla decodera)
         """
         batch_size = x.size(0)
+        seq_len = x.size(1)
+
+        # Konkatenacja parametrów warunkujących do wejścia
+        if params is not None and self.param_size > 0:
+            # Rozszerzenie params do każdego kroku czasowego
+            # params: (batch, param_size) -> (batch, seq_len, param_size)
+            params_expanded = params.unsqueeze(1).expand(-1, seq_len, -1)
+            # Konkatenacja: (batch, seq_len, input_size + param_size)
+            x = torch.cat([x, params_expanded], dim=-1)
 
         # Inicjalizacja stanów ukrytych jeśli nie podano
         if hidden is None:

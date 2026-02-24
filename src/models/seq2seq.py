@@ -407,6 +407,405 @@ class Seq2SeqModel(pl.LightningModule):
         }
 
 
+class ConditionedSeq2SeqModel(pl.LightningModule):
+    """
+    Model Encoder-Decoder (Seq2Seq) z parametrami warunkującymi.
+
+    Rozszerzenie Seq2SeqModel o obsługę parametrów warunkujących
+    (np. ζ, ω₀ dla parametryzacji bezwymiarowej).
+
+    Parametry warunkujące są przekazywane do encodera i konkatenowane
+    do wejścia w każdym kroku czasowym.
+
+    Attributes:
+        encoder: Moduł encodera LSTM z conditioningiem
+        decoder: Moduł decodera Gaussowskiego
+        T_out: Długość horyzontu predykcji
+        param_size: Rozmiar wektora parametrów warunkujących
+    """
+
+    def __init__(
+        self,
+        input_size: int = 2,
+        hidden_size: int = 64,
+        num_layers: int = 2,
+        T_out: int = 50,
+        param_size: int = 2,
+        dropout: float = 0.1,
+        bidirectional_encoder: bool = False,
+        learning_rate: float = 1e-3,
+        teacher_forcing_ratio: float = 1.0,
+        teacher_forcing_decay: float = 0.02,
+        min_sigma: float = 1e-4,
+        gradient_clip_val: float = 1.0
+    ):
+        """
+        Inicjalizacja modelu Seq2Seq z conditioningiem.
+
+        Args:
+            input_size: Liczba cech wejściowych (np. 2 dla [x, v])
+            hidden_size: Rozmiar warstwy ukrytej LSTM
+            num_layers: Liczba warstw LSTM
+            T_out: Długość horyzontu predykcji
+            param_size: Rozmiar wektora parametrów warunkujących
+                       (np. 2 dla [zeta, omega_0])
+            dropout: Współczynnik dropout
+            bidirectional_encoder: Czy encoder ma być dwukierunkowy
+            learning_rate: Współczynnik uczenia dla optymalizatora
+            teacher_forcing_ratio: Początkowy współczynnik teacher forcing (0-1)
+            teacher_forcing_decay: Spadek teacher forcing na epokę
+            min_sigma: Minimalna wartość sigma w decoderze
+            gradient_clip_val: Maksymalna norma gradientu
+        """
+        super().__init__()
+
+        # Zapisanie hiperparametrów
+        self.save_hyperparameters()
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.T_out = T_out
+        self.param_size = param_size
+        self.learning_rate = learning_rate
+        self.teacher_forcing_ratio = teacher_forcing_ratio
+        self.teacher_forcing_decay = teacher_forcing_decay
+        self.gradient_clip_val = gradient_clip_val
+
+        # Encoder z conditioningiem
+        self.encoder = LSTMEncoder(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+            bidirectional=bidirectional_encoder,
+            param_size=param_size
+        )
+
+        # Decoder (bez zmian)
+        self.decoder = GaussianDecoder(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            output_size=input_size,
+            num_layers=num_layers,
+            dropout=dropout,
+            min_sigma=min_sigma
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        params: torch.Tensor,
+        target: Optional[torch.Tensor] = None,
+        teacher_forcing_ratio: Optional[float] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass modelu z parametrami warunkującymi.
+
+        Args:
+            x: Sekwencja wejściowa (batch_size, T_in, input_size)
+            params: Parametry warunkujące (batch_size, param_size)
+                   np. [zeta, omega_0] dla parametryzacji bezwymiarowej
+            target: Opcjonalna sekwencja docelowa dla teacher forcing
+                   (batch_size, T_out, input_size)
+            teacher_forcing_ratio: Opcjonalny współczynnik TF
+
+        Returns:
+            Tuple zawierający:
+                - mu_seq: Predykowane średnie (batch_size, T_out, input_size)
+                - sigma_seq: Predykowane odchylenia std (batch_size, T_out, input_size)
+        """
+        # Encoding z parametrami warunkującymi
+        _, encoder_hidden = self.encoder(x, params=params)
+
+        # Ostatni krok z wejścia jako początek dla decodera
+        initial_input = x[:, -1, :]  # (batch_size, input_size)
+
+        # Wybór współczynnika teacher forcing
+        tf_ratio = teacher_forcing_ratio if teacher_forcing_ratio is not None \
+            else self.teacher_forcing_ratio
+
+        # Decoding
+        mu_seq, sigma_seq = self.decoder.forward_sequence(
+            initial_input=initial_input,
+            hidden=encoder_hidden,
+            seq_len=self.T_out,
+            target=target,
+            teacher_forcing_ratio=tf_ratio
+        )
+
+        return mu_seq, sigma_seq
+
+    def training_step(
+        self,
+        batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int
+    ) -> torch.Tensor:
+        """
+        Pojedynczy krok treningowy.
+
+        Args:
+            batch: Tuple (input_window, params, target_window)
+            batch_idx: Indeks batcha
+
+        Returns:
+            Strata treningowa
+        """
+        input_seq, params, target_seq = batch
+
+        # Forward pass z teacher forcing
+        mu_seq, sigma_seq = self(
+            x=input_seq,
+            params=params,
+            target=target_seq,
+            teacher_forcing_ratio=self.teacher_forcing_ratio
+        )
+
+        # Obliczenie straty (Gaussian NLL)
+        loss = multistep_gaussian_nll_loss(
+            mu_seq=mu_seq,
+            sigma_seq=sigma_seq,
+            target_seq=target_seq,
+            reduction='mean'
+        )
+
+        # Logowanie metryk
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log('teacher_forcing_ratio', self.teacher_forcing_ratio, on_step=False, on_epoch=True)
+        self.log('train_sigma_mean', sigma_seq.mean(), on_step=False, on_epoch=True)
+
+        return loss
+
+    def validation_step(
+        self,
+        batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int
+    ) -> torch.Tensor:
+        """
+        Pojedynczy krok walidacyjny.
+
+        Args:
+            batch: Tuple (input_window, params, target_window)
+            batch_idx: Indeks batcha
+
+        Returns:
+            Strata walidacyjna
+        """
+        input_seq, params, target_seq = batch
+
+        # Forward pass BEZ teacher forcing (pełna autoregresja)
+        mu_seq, sigma_seq = self(
+            x=input_seq,
+            params=params,
+            target=None,
+            teacher_forcing_ratio=0.0
+        )
+
+        # Obliczenie straty
+        loss = multistep_gaussian_nll_loss(
+            mu_seq=mu_seq,
+            sigma_seq=sigma_seq,
+            target_seq=target_seq,
+            reduction='mean'
+        )
+
+        # Obliczenie dodatkowych metryk
+        rmse = torch.sqrt(((mu_seq - target_seq) ** 2).mean())
+        mae = (mu_seq - target_seq).abs().mean()
+
+        # Logowanie metryk
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_rmse', rmse, on_step=False, on_epoch=True, prog_bar=True)
+        self.log('val_mae', mae, on_step=False, on_epoch=True)
+        self.log('val_sigma_mean', sigma_seq.mean(), on_step=False, on_epoch=True)
+
+        return loss
+
+    def test_step(
+        self,
+        batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int
+    ) -> torch.Tensor:
+        """
+        Pojedynczy krok testowy.
+
+        Args:
+            batch: Tuple (input_window, params, target_window)
+            batch_idx: Indeks batcha
+
+        Returns:
+            Strata testowa
+        """
+        input_seq, params, target_seq = batch
+
+        # Forward pass BEZ teacher forcing
+        mu_seq, sigma_seq = self(
+            x=input_seq,
+            params=params,
+            target=None,
+            teacher_forcing_ratio=0.0
+        )
+
+        # Obliczenie straty
+        loss = multistep_gaussian_nll_loss(
+            mu_seq=mu_seq,
+            sigma_seq=sigma_seq,
+            target_seq=target_seq,
+            reduction='mean'
+        )
+
+        # Metryki
+        rmse = torch.sqrt(((mu_seq - target_seq) ** 2).mean())
+        mae = (mu_seq - target_seq).abs().mean()
+
+        # Logowanie
+        self.log('test_loss', loss, on_step=False, on_epoch=True)
+        self.log('test_rmse', rmse, on_step=False, on_epoch=True)
+        self.log('test_mae', mae, on_step=False, on_epoch=True)
+        self.log('test_sigma_mean', sigma_seq.mean(), on_step=False, on_epoch=True)
+
+        return loss
+
+    def predict_step(
+        self,
+        batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Krok predykcji.
+
+        Args:
+            batch: Tuple (input_window, params, target_window)
+            batch_idx: Indeks batcha
+
+        Returns:
+            Słownik z predykcjami i targetami
+        """
+        input_seq, params, target_seq = batch
+
+        # Forward pass
+        mu_seq, sigma_seq = self(
+            x=input_seq,
+            params=params,
+            target=None,
+            teacher_forcing_ratio=0.0
+        )
+
+        return {
+            'input': input_seq,
+            'params': params,
+            'target': target_seq,
+            'mu': mu_seq,
+            'sigma': sigma_seq
+        }
+
+    def configure_optimizers(self) -> Dict[str, Any]:
+        """
+        Konfiguracja optymalizatora i schedulera.
+
+        Returns:
+            Słownik z konfiguracją optymalizatora
+        """
+        optimizer = AdamW(
+            self.parameters(),
+            lr=self.learning_rate,
+            weight_decay=0.01
+        )
+
+        scheduler = ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5
+        )
+
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'monitor': 'val_loss',
+                'interval': 'epoch',
+                'frequency': 1
+            }
+        }
+
+    def on_train_epoch_end(self) -> None:
+        """
+        Wywoływane na końcu każdej epoki treningowej.
+
+        Aktualizuje współczynnik teacher forcing (scheduled sampling).
+        """
+        self.teacher_forcing_ratio = max(
+            0.0,
+            self.teacher_forcing_ratio - self.teacher_forcing_decay
+        )
+
+    def predict_trajectory(
+        self,
+        input_seq: torch.Tensor,
+        params: torch.Tensor,
+        num_samples: int = 1
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Predykcja trajektorii z wielokrotnym próbkowaniem.
+
+        Args:
+            input_seq: Sekwencja wejściowa (1, T_in, input_size) lub (T_in, input_size)
+            params: Parametry warunkujące (1, param_size) lub (param_size,)
+            num_samples: Liczba próbek do wygenerowania
+
+        Returns:
+            Słownik zawierający:
+                - mu: Średnie predykcji (T_out, input_size)
+                - sigma: Odchylenia std (T_out, input_size)
+                - samples: Próbki z rozkładu (num_samples, T_out, input_size)
+        """
+        self.eval()
+
+        # Upewnienie się o poprawnym kształcie
+        if input_seq.dim() == 2:
+            input_seq = input_seq.unsqueeze(0)
+        if params.dim() == 1:
+            params = params.unsqueeze(0)
+
+        with torch.no_grad():
+            # Predykcja parametrów rozkładu
+            mu_seq, sigma_seq = self(input_seq, params=params, teacher_forcing_ratio=0.0)
+
+            # Próbkowanie
+            samples = []
+            for _ in range(num_samples):
+                sample = self.decoder.sample(mu_seq, sigma_seq)
+                samples.append(sample)
+
+            samples = torch.cat(samples, dim=0)
+
+        return {
+            'mu': mu_seq.squeeze(0),
+            'sigma': sigma_seq.squeeze(0),
+            'samples': samples
+        }
+
+    def get_num_parameters(self) -> Dict[str, int]:
+        """
+        Zwraca liczbę parametrów modelu.
+
+        Returns:
+            Słownik z liczbą parametrów
+        """
+        total = sum(p.numel() for p in self.parameters())
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        encoder_params = sum(p.numel() for p in self.encoder.parameters())
+        decoder_params = sum(p.numel() for p in self.decoder.parameters())
+
+        return {
+            'total': total,
+            'trainable': trainable,
+            'encoder': encoder_params,
+            'decoder': decoder_params
+        }
+
+
 if __name__ == "__main__":
     # Test modułu Seq2Seq
     print("Test Seq2SeqModel (LightningModule)")

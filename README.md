@@ -1,20 +1,23 @@
-# Predykcja Szeregów Czasowych - Model Seq2Seq LSTM
+# Predykcja Szeregow Czasowych - Model Seq2Seq LSTM
 
-Model rekurencyjnej sieci neuronowej (RNN) do predykcji przyszłych rozkładów ruchu układu dynamicznego na podstawie fragmentu zarejestrowanego ruchu.
+Model rekurencyjnej sieci neuronowej (RNN) do predykcji przyszlych rozkladow ruchu ukladu dynamicznego na podstawie fragmentu zarejestrowanego ruchu.
 
 ## Opis
 
-Projekt implementuje architekturę **Encoder-Decoder (Seq2Seq)** opartą na **LSTM** z probabilistycznym wyjściem Gaussowskim. Model uczy się dynamiki czasowej bezpośrednio z danych i generuje prognozy probabilistyczne (średnia μ i odchylenie standardowe σ) na zadany horyzont czasowy.
+Projekt implementuje architekture **Encoder-Decoder (Seq2Seq)** oparta na **LSTM** z probabilistycznym wyjsciem Gaussowskim. Model uczy sie dynamiki czasowej bezposrednio z danych i generuje prognozy probabilistyczne (srednia i odchylenie standardowe) na zadany horyzont czasowy.
 
-### Główne cechy:
+### Glowne cechy:
 - Architektura Seq2Seq z LSTM
-- Wyjście probabilistyczne (rozkład Gaussa)
+- Wyjscie probabilistyczne (rozklad Gaussa)
 - Teacher forcing ze scheduled sampling
-- Gradient clipping dla stabilności
+- Gradient clipping dla stabilnosci
 - Integracja z PyTorch Lightning
-- **Obsługa dwóch typów oscylatorów:** tłumiony i bez tłumienia
-- **Predykcja rekurencyjna** dla długoterminowych prognoz
-- Automatyczne testowanie na obu typach oscylatorów
+- **Dwa tryby parametryzacji:**
+  - Wymiarowa (m, c, k) - klasyczna parametryzacja fizyczna
+  - **Bezwymiarowa (zeta, omega0)** - uniwersalna parametryzacja
+- **Obsluga dwoch typow oscylatorow:** tlumiony i bez tlumienia
+- **Predykcja rekurencyjna** dla dlugoterminowych prognoz
+- Automatyczne testowanie na obu typach oscylatorow
 
 ## Wymagania
 
@@ -30,7 +33,7 @@ git clone <repository-url>
 cd time-series-rnn-prediction
 ```
 
-2. **Utwórz środowisko wirtualne:**
+2. **Utworz srodowisko wirtualne:**
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate  # Linux/macOS
@@ -38,7 +41,7 @@ source .venv/bin/activate  # Linux/macOS
 .venv\Scripts\activate     # Windows
 ```
 
-3. **Zainstaluj zależności:**
+3. **Zainstaluj zaleznosci:**
 ```bash
 pip install -r requirements.txt
 ```
@@ -47,183 +50,245 @@ pip install -r requirements.txt
 
 ```
 ├── config/
-│   └── config.py              # Konfiguracja hiperparametrów
+│   └── config.py              # Konfiguracja hiperparametrow
 ├── data/
-│   └── synthetic/             # Dane syntetyczne
+│   ├── synthetic/             # Dane syntetyczne (parametryzacja wymiarowa)
+│   └── dimensionless/         # Dane syntetyczne (parametryzacja bezwymiarowa)
 ├── src/
 │   ├── data_generation/
-│   │   └── synthetic.py       # Generator oscylatorów (tłumiony + prosty)
+│   │   └── synthetic.py       # Generator oscylatorow (tlumiony + prosty + bezwymiarowy)
 │   ├── preprocessing/
 │   │   └── preprocessor.py    # Normalizacja i filtrowanie
 │   ├── dataset/
-│   │   └── time_series_dataset.py  # Dataset i DataModule
+│   │   └── time_series_dataset.py  # Dataset i DataModule (w tym Conditioned*)
 │   ├── models/
-│   │   ├── encoder.py         # Encoder LSTM
+│   │   ├── encoder.py         # Encoder LSTM (z opcjonalnym conditioningiem)
 │   │   ├── decoder.py         # Decoder Gaussowski
-│   │   └── seq2seq.py         # Model Seq2Seq (LightningModule)
+│   │   └── seq2seq.py         # Model Seq2Seq + ConditionedSeq2Seq
 │   ├── training/
 │   │   └── losses.py          # Gaussian NLL Loss
 │   └── evaluation/
 │       ├── metrics.py         # RMSE, MAE, NLL, CRPS, Coverage
 │       └── visualization.py   # Wykresy predykcji
-├── outputs/                   # Wyniki treningów
-├── main.py                    # Skrypt główny
-├── requirements.txt           # Zależności
+├── outputs/                   # Wyniki treningow
+├── main.py                    # Skrypt glowny
+├── requirements.txt           # Zaleznosci
 └── README.md
 ```
 
-## Użycie
+## Parametryzacja danych
+
+Projekt obsluguje dwa tryby parametryzacji oscylatora:
+
+### 1. Parametryzacja wymiarowa (domyslna)
+
+Klasyczne rownanie ruchu:
+```
+m*x'' + c*x' + k*x = 0
+```
+
+Parametry: masa (m), tlumienie (c), sztywnosc (k), warunki poczatkowe (x0, v0).
+
+**Wady:** Rozne kombinacje parametrow moga dawac podobna dynamike, co utrudnia uczenie.
+
+### 2. Parametryzacja bezwymiarowa (--dimensionless)
+
+Rownanie w czasie bezwymiarowym tau = omega0*t:
+```
+d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0
+```
+
+**Kluczowe cechy:**
+- **Stale warunki poczatkowe:** x(0) = 1, dx/dtau(0) = 0
+- **Dynamika zalezy TYLKO od zeta** (wspolczynnik tlumienia)
+- Model uczy sie uniwersalnych zaleznosci
+- Lepsza generalizacja na rozne uklady fizyczne
+- Parametry: zeta (tlumienie), omega0 (czestotliwosc wlasna)
+
+**Zalety:**
+- Jeden parametr sterujacy dynamika (zeta)
+- Eliminacja zmiennosci zwiazanej z warunkami poczatkowymi
+- Model kondycjonowany parametrami [zeta, omega0]
+
+## Uzycie
 
 ### 1. Generacja danych syntetycznych
 
-Generuje trajektorie oscylatora harmonicznego. Obsługuje dwa typy:
-- **Tłumiony** (damped) - oscylacje gasnące
-- **Bez tłumienia** (undamped) - oscylacje stałe
+#### Dane wymiarowe (klasyczne)
 
 ```bash
-# Tylko trajektorie tłumione (domyślnie)
-python main.py --mode generate --num-trajectories 1000 --t-max 20.0 --dt 0.1
+# Tylko trajektorie tlumione (domyslnie)
+python main.py --mode generate --num-trajectories 1000 --t-max 20.0 --dt 0.01
 
-# Mieszany dataset (50% tłumione, 50% bez tłumienia)
-python main.py --mode generate --num-trajectories 1000 --undamped-ratio 0.5 --t-max 20.0 --dt 0.1
+# Mieszany dataset (50% tlumione, 50% bez tlumienia)
+python main.py --mode generate --num-trajectories 1000 --undamped-ratio 0.5
 ```
 
-**Parametry:**
+#### Dane bezwymiarowe (zalecane)
 
-| Parametr | Domyślnie | Opis |
+```bash
+python main.py --mode generate --dimensionless \
+    --num-trajectories 1000 \
+    --data-path data/dimensionless/dataset.npz \
+    --zeta-range 0.0 0.5 \
+    --omega0-range 1.0 20.0 \
+    --tau-max 50.0 \
+    --dtau 0.1
+```
+
+**Parametry generacji danych:**
+
+| Parametr | Domyslnie | Opis |
 |----------|-----------|------|
+| `--dimensionless` | False | Uzyj parametryzacji bezwymiarowej |
 | `--num-trajectories` | 1000 | Liczba trajektorii |
-| `--t-max` | 10.0 | Czas symulacji [s] |
-| `--dt` | 0.01 | Krok czasowy [s] |
+| `--zeta-range` | [0.0, 0.5] | Zakres wspolczynnika tlumienia zeta |
+| `--omega0-range` | [1.0, 20.0] | Zakres czestotliwosci omega0 [rad/s] |
+| `--tau-max` | 50.0 | Maksymalny czas bezwymiarowy |
+| `--dtau` | 0.1 | Krok czasowy bezwymiarowy |
+| `--t-max` | 10.0 | Czas symulacji [s] (tryb wymiarowy) |
+| `--dt` | 0.01 | Krok czasowy [s] (tryb wymiarowy) |
 | `--noise-std` | 0.01 | Szum pomiarowy |
-| `--undamped-ratio` | 0.0 | Proporcja trajektorii bez tłumienia (0.0-1.0) |
-
-Przy mieszanym datasecie generowane są dwa wykresy przykładowych trajektorii:
-- `sample_trajectory_damped.png` - oscylator tłumiony
-- `sample_trajectory_undamped.png` - oscylator bez tłumienia
+| `--undamped-ratio` | 0.0 | Proporcja trajektorii bez tlumienia (tryb wymiarowy) |
 
 ### 2. Trening modelu
 
-```bash
-python main.py --mode train
-```
+#### Trening z danymi wymiarowymi
 
-**Główne parametry treningu:**
-
-| Parametr | Domyślnie | Opis |
-|----------|-----------|------|
-| `--max-epochs` | 100 | Maksymalna liczba epok |
-| `--batch-size` | 64 | Rozmiar batcha |
-| `--learning-rate` | 0.001 | Współczynnik uczenia |
-| `--hidden-size` | 64 | Rozmiar warstwy ukrytej LSTM |
-| `--num-layers` | 2 | Liczba warstw LSTM |
-| `--T-in` | 50 | Długość okna wejściowego |
-| `--T-out` | 50 | Horyzont predykcji |
-| `--teacher-forcing-ratio` | 0.5 | Początkowy współczynnik TF |
-| `--gradient-clip` | 1.0 | Maksymalna norma gradientu |
-| `--early-stopping-patience` | 10 | Cierpliwość early stopping |
-
-**Przykład treningu na mieszanym datasecie:**
 ```bash
 python main.py --mode train \
     --max-epochs 100 \
-    --T-in 100 \
-    --T-out 100 \
-    --hidden-size 128 \
-    --batch-size 32
+    --T-in 50 --T-out 50 \
+    --hidden-size 64 \
+    --batch-size 64
 ```
+
+#### Trening z danymi bezwymiarowymi (zalecany)
+
+```bash
+python main.py --mode train --dimensionless \
+    --data-path data/dimensionless/dataset.npz \
+    --max-epochs 100 \
+    --T-in 50 --T-out 30 \
+    --hidden-size 64 \
+    --batch-size 64
+```
+
+**Glowne parametry treningu:**
+
+| Parametr | Domyslnie | Opis |
+|----------|-----------|------|
+| `--dimensionless` | False | Trening z parametryzacja bezwymiarowa |
+| `--max-epochs` | 100 | Maksymalna liczba epok |
+| `--batch-size` | 64 | Rozmiar batcha |
+| `--learning-rate` | 0.001 | Wspolczynnik uczenia |
+| `--hidden-size` | 64 | Rozmiar warstwy ukrytej LSTM |
+| `--num-layers` | 2 | Liczba warstw LSTM |
+| `--T-in` | 50 | Dlugosc okna wejsciowego |
+| `--T-out` | 50 | Horyzont predykcji |
+| `--teacher-forcing-ratio` | 0.5 | Poczatkowy wspolczynnik TF |
+| `--teacher-forcing-decay` | 0.05 | Spadek TF na epoke |
+| `--gradient-clip` | 1.0 | Maksymalna norma gradientu |
+| `--early-stopping-patience` | 10 | Cierpliwosc early stopping |
 
 ### 3. Ewaluacja modelu
 
 ```bash
-python main.py --mode test --checkpoint outputs/run_YYYYMMDD_HHMMSS/checkpoints/best_model*.ckpt
+# Tryb wymiarowy
+python main.py --mode test --checkpoint outputs/run_*/checkpoints/best*.ckpt
+
+# Tryb bezwymiarowy
+python main.py --mode test --dimensionless \
+    --data-path data/dimensionless/dataset.npz \
+    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
 ```
 
 Generuje:
-- Metryki: RMSE, MAE, NLL, CRPS, Coverage (1σ, 2σ, 3σ)
-- Wykresy predykcji z przedziałami ufności
+- Metryki: RMSE, MAE, NLL, CRPS, Coverage (1sigma, 2sigma, 3sigma)
+- Wykresy predykcji z przedzialami ufnosci
 - Portret fazowy
-- Ewolucja niepewności
+- Ewolucja niepewnosci
 
 ### 4. Predykcja (tryb testowy)
 
-Testuje model na **obu typach oscylatorów** (tłumiony i bez tłumienia) z losowymi parametrami:
+Testuje model na nowych trajektoriach:
 
 ```bash
+# Tryb wymiarowy (testuje oba typy oscylatorow)
 python main.py --mode predict --device cpu \
     --checkpoint outputs/run_*/checkpoints/best.ckpt \
-    --T-in 100 --T-out 100 --dt 0.1 --t-max 50
+    --T-in 100 --T-out 100 --dt 0.1 --t-max 50 \
+    --num-predictions 3 --recursive-steps 5
 ```
 
 **Parametry predykcji:**
 
-| Parametr | Domyślnie | Opis |
+| Parametr | Domyslnie | Opis |
 |----------|-----------|------|
 | `--num-predictions` | 3 | Liczba predykcji na trajektorii |
-| `--recursive-steps` | 0 | Liczba kroków rekurencyjnych (0 = wyłączone) |
-| `--T-in` | 50 | Długość okna wejściowego |
+| `--recursive-steps` | 0 | Liczba krokow rekurencyjnych (0 = wylaczone) |
+| `--T-in` | 50 | Dlugosc okna wejsciowego |
 | `--T-out` | 50 | Horyzont predykcji |
-| `--t-max` | 10.0 | Długość trajektorii testowej [s] |
+| `--t-max` | 10.0 | Dlugosc trajektorii testowej [s] |
 | `--dt` | 0.01 | Krok czasowy [s] |
 
-**Przykład z predykcją rekurencyjną:**
-```bash
-python main.py --mode predict --device cpu \
-    --checkpoint outputs/run_*/checkpoints/best.ckpt \
-    --T-in 100 --T-out 100 --dt 0.1 --t-max 60 \
-    --num-predictions 3 --recursive-steps 5
-```
+## Przykladowe workflow
 
-**Struktura wyników predykcji:**
-```
-predictions/pred_YYYYMMDD_HHMMSS/
-├── parameters.txt
-├── damped/                          # Oscylator tłumiony
-│   ├── multi_prediction_position.png
-│   ├── multi_prediction_velocity.png
-│   ├── parameters.txt
-│   ├── zooms/                       # Zbliżenia każdej predykcji
-│   │   ├── zoom_1_position.png
-│   │   ├── zoom_1_velocity.png
-│   │   └── ...
-│   └── recursive/                   # Predykcja rekurencyjna
-│       ├── recursive_position.png
-│       └── recursive_velocity.png
-└── undamped/                        # Oscylator bez tłumienia
-    ├── multi_prediction_position.png
-    ├── multi_prediction_velocity.png
-    ├── parameters.txt
-    ├── zooms/
-    └── recursive/
-```
-
-## Przykładowy workflow
+### Workflow 1: Parametryzacja wymiarowa (klasyczna)
 
 ```bash
-# 1. Aktywacja środowiska
-source .venv/bin/activate
+# 1. Aktywacja srodowiska
+source .venv/bin/activate  # Linux/macOS
+.venv\Scripts\activate     # Windows
 
 # 2. Generacja mieszanego datasetu
 python main.py --mode generate \
     --num-trajectories 1000 \
     --undamped-ratio 0.5 \
-    --t-max 20 --dt 0.1
+    --t-max 20 --dt 0.01
 
 # 3. Trening modelu
 python main.py --mode train \
     --T-in 100 --T-out 100 \
     --max-epochs 100
 
-# 4. Predykcja (testuje oba typy oscylatorów)
+# 4. Predykcja
 python main.py --mode predict --device cpu \
     --checkpoint outputs/run_*/checkpoints/best.ckpt \
     --T-in 100 --T-out 100 --dt 0.1 --t-max 50 \
     --num-predictions 3 --recursive-steps 3
 ```
 
+### Workflow 2: Parametryzacja bezwymiarowa (zalecana)
+
+```bash
+# 1. Aktywacja srodowiska
+source .venv/bin/activate  # Linux/macOS
+.venv\Scripts\activate     # Windows
+
+# 2. Generacja danych bezwymiarowych
+python main.py --mode generate --dimensionless \
+    --num-trajectories 1000 \
+    --data-path data/dimensionless/dataset.npz \
+    --zeta-range 0.0 0.5 \
+    --tau-max 50.0 --dtau 0.1
+
+# 3. Trening modelu z conditioningiem
+python main.py --mode train --dimensionless \
+    --data-path data/dimensionless/dataset.npz \
+    --T-in 50 --T-out 30 \
+    --max-epochs 100 \
+    --hidden-size 64
+
+# 4. Ewaluacja
+python main.py --mode test --dimensionless \
+    --data-path data/dimensionless/dataset.npz \
+    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
+```
+
 ## Wyniki
 
-Po treningu wyniki zapisywane są w katalogu `outputs/run_YYYYMMDD_HHMMSS/`:
+Po treningu wyniki zapisywane sa w katalogu `outputs/run_YYYYMMDD_HHMMSS/`:
 
 ```
 outputs/run_20240131_123456/
@@ -241,6 +306,7 @@ outputs/run_20240131_123456/
 │   ├── phase_space.png
 │   └── training_curves.png
 ├── preprocessor_stats.npz
+├── params_stats.npz           # Tylko dla trybu bezwymiarowego
 └── metrics.txt
 ```
 
@@ -252,28 +318,47 @@ outputs/run_20240131_123456/
 | **MAE** | Mean Absolute Error |
 | **NLL** | Negative Log-Likelihood |
 | **CRPS** | Continuous Ranked Probability Score |
-| **Coverage 1σ** | % próbek w przedziale ±1σ (oczekiwane: 68.27%) |
-| **Coverage 2σ** | % próbek w przedziale ±2σ (oczekiwane: 95.45%) |
+| **Coverage 1sigma** | % probek w przedziale +-1sigma (oczekiwane: 68.27%) |
+| **Coverage 2sigma** | % probek w przedziale +-2sigma (oczekiwane: 95.45%) |
 
-## Typy oscylatorów
+## Typy oscylatorow
 
-### Oscylator tłumiony (DampedOscillator)
-Równanie ruchu: `m·x'' + c·x' + k·x = 0`
+### Oscylator tlumiony (DampedOscillator)
+Rownanie ruchu: `m*x'' + c*x' + k*x = 0`
 
-- Oscylacje gasnące w czasie
-- Portret fazowy: spirala do środka
-- Parametry: masa (m), tłumienie (c), sztywność (k)
+- Oscylacje gasnace w czasie
+- Portret fazowy: spirala do srodka
+- Parametry: masa (m), tlumienie (c), sztywnosc (k)
 
 ### Oscylator prosty (SimpleHarmonicOscillator)
-Równanie ruchu: `m·x'' + k·x = 0` (c = 0)
+Rownanie ruchu: `m*x'' + k*x = 0` (c = 0)
 
-- Oscylacje stałe (niegasnące)
-- Portret fazowy: zamknięta elipsa
-- Parametry: masa (m), sztywność (k)
+- Oscylacje stale (niegasnace)
+- Portret fazowy: zamknieta elipsa
+- Parametry: masa (m), sztywnosc (k)
 
-## Urządzenia obliczeniowe
+### Oscylator bezwymiarowy (DimensionlessOscillator)
+Rownanie ruchu: `d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0`
 
-Program automatycznie wykrywa i wykorzystuje dostępny akcelerator:
+- Czas bezwymiarowy: tau = omega0*t
+- Stale warunki poczatkowe: x(0)=1, dx/dtau(0)=0
+- Dynamika zalezy tylko od zeta
+- Model kondycjonowany parametrami [zeta, omega0]
+
+## Architektura modelu
+
+### Seq2SeqModel (tryb wymiarowy)
+- Encoder LSTM: przetwarza sekwencje wejsciowa
+- Decoder Gaussowski: generuje predykcje probabilistyczne
+
+### ConditionedSeq2SeqModel (tryb bezwymiarowy)
+- Encoder LSTM z conditioningiem: parametry [zeta, omega0] konkatenowane do wejscia
+- Decoder Gaussowski: generuje predykcje probabilistyczne
+- Parametry warunkujace normalizowane do [0, 1]
+
+## Urzadzenia obliczeniowe
+
+Program automatycznie wykrywa i wykorzystuje dostepny akcelerator:
 
 | Platforma | System | Akcelerator | Wymagania |
 |-----------|--------|-------------|-----------|
@@ -282,14 +367,14 @@ Program automatycznie wykrywa i wykorzystuje dostępny akcelerator:
 | **AMD GPU** | Windows | DirectML | torch-directml |
 | **Intel GPU** | Windows | DirectML | torch-directml |
 | **Apple Silicon** | macOS | MPS | macOS 12.3+ z PyTorch 1.12+ |
-| **CPU** | Wszystkie | - | Zawsze dostępne (fallback) |
+| **CPU** | Wszystkie | - | Zawsze dostepne (fallback) |
 
-### Automatyczne wykrywanie (domyślne)
+### Automatyczne wykrywanie (domyslne)
 ```bash
 python main.py --mode train --device auto
 ```
 
-### Wymuszenie konkretnego urządzenia
+### Wymuszenie konkretnego urzadzenia
 ```bash
 python main.py --mode train --device cpu
 python main.py --mode train --device cuda      # NVIDIA / AMD ROCm (Linux)
@@ -297,30 +382,30 @@ python main.py --mode train --device mps       # Apple Silicon
 python main.py --mode train --device directml  # AMD/Intel na Windows
 ```
 
-> **Uwaga:** Dla trybu `predict` na Windows z DirectML zalecane jest użycie `--device cpu`
-> ze względu na ograniczone wsparcie LSTM w DirectML.
+> **Uwaga:** Dla trybu `predict` na Windows z DirectML zalecane jest uzycie `--device cpu`
+> ze wzgledu na ograniczone wsparcie LSTM w DirectML.
 
-## Rozwiązywanie problemów
+## Rozwiazywanie problemow
 
-### Błąd pamięci GPU
+### Blad pamieci GPU
 Zmniejsz `batch_size` lub `hidden_size`:
 ```bash
 python main.py --mode train --batch-size 16 --hidden-size 32
 ```
 
 ### Wolny trening
-Zwiększ liczbę workerów (jeśli masz wiele rdzeni CPU):
+Zwieksz liczbe workerow (jesli masz wiele rdzeni CPU):
 ```bash
 python main.py --mode train --num-workers 4
 ```
 
-### Model się nie uczy
+### Model sie nie uczy
 - Zmniejsz `learning_rate`
-- Zwiększ `teacher_forcing_ratio`
-- Sprawdź czy dane są poprawnie znormalizowane
+- Zwieksz `teacher_forcing_ratio`
+- Sprawdz czy dane sa poprawnie znormalizowane
 
-### Błąd DirectML w trybie predict
-Użyj CPU dla predykcji:
+### Blad DirectML w trybie predict
+Uzyj CPU dla predykcji:
 ```bash
 python main.py --mode predict --device cpu --checkpoint ...
 ```
@@ -331,4 +416,4 @@ Projekt stworzony na potrzeby pracy dyplomowej.
 
 ## Autor
 
-Bartłomiej Dec
+Bartlomiej Dec

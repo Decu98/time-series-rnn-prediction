@@ -231,21 +231,21 @@ def get_device(preferred: str = "auto") -> torch.device:
     if preferred == "cuda":
         if torch.cuda.is_available():
             return torch.device("cuda")
-        print("UWAGA: CUDA niedostępne, używam CPU")
+        print("UWAGA: CUDA niedostepne, uzywam CPU")
         return torch.device("cpu")
 
     if preferred == "mps":
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             if torch.backends.mps.is_built():
                 return torch.device("mps")
-        print("UWAGA: MPS niedostępne, używam CPU")
+        print("UWAGA: MPS niedostepne, uzywam CPU")
         return torch.device("cpu")
 
     if preferred == "directml":
         dml_device = get_directml_device()
         if dml_device is not None:
             return dml_device
-        print("UWAGA: DirectML niedostępne, używam CPU")
+        print("UWAGA: DirectML niedostepne, uzywam CPU")
         return torch.device("cpu")
 
     # Auto-detekcja (preferred == "auto")
@@ -270,7 +270,7 @@ def get_device(preferred: str = "auto") -> torch.device:
             print("Wykryto Apple Silicon (MPS)")
             return torch.device("mps")
 
-    print("Brak GPU, używam CPU")
+    print("Brak GPU, uzywam CPU")
     return torch.device("cpu")
 
 
@@ -304,7 +304,7 @@ def get_accelerator_config(preferred: str = "auto") -> dict:
         # DirectML nie jest wspierany przez PyTorch Lightning
         # Użyj ręcznej pętli treningowej lub CPU
         print("UWAGA: DirectML nie jest wspierany przez PyTorch Lightning.")
-        print("       Dla treningu na AMD GPU (Windows) użyj ręcznej pętli.")
+        print("       Dla treningu na AMD GPU (Windows) uzyj recznej petli.")
         return {"accelerator": "cpu", "devices": 1}
 
     # Auto-detekcja
@@ -318,7 +318,7 @@ def get_accelerator_config(preferred: str = "auto") -> dict:
     # DirectML w auto-detekcji - fallback do CPU dla Lightning
     if platform.system() == "Windows" and is_directml_available():
         print("UWAGA: DirectML wykryty, ale PyTorch Lightning go nie wspiera.")
-        print("       Używam CPU dla Lightning. Rozważ ręczną pętlę treningową.")
+        print("       Uzywam CPU dla Lightning. Rozwaz reczna petle treningowa.")
 
     return {"accelerator": "cpu", "devices": 1}
 
@@ -328,14 +328,14 @@ def print_device_info() -> None:
     Wyświetla informacje o dostępnych urządzeniach obliczeniowych.
     """
     print("\n" + "=" * 50)
-    print("INFORMACJE O URZĄDZENIACH OBLICZENIOWYCH")
+    print("INFORMACJE O URZADZENIACH OBLICZENIOWYCH")
     print("=" * 50)
 
     print(f"\nSystem: {platform.system()} {platform.release()}")
     print(f"PyTorch wersja: {torch.__version__}")
 
     # CUDA (NVIDIA / AMD ROCm na Linux)
-    print(f"\nCUDA dostępne: {torch.cuda.is_available()}")
+    print(f"\nCUDA dostepne: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
         cuda_version = torch.version.cuda if torch.version.cuda else "ROCm"
         print(f"  - Wersja: {cuda_version}")
@@ -352,7 +352,7 @@ def print_device_info() -> None:
         try:
             import torch_directml
             print(f"  - torch-directml zainstalowany")
-            print(f"  - UWAGA: Wymaga ręcznej pętli treningowej (brak wsparcia Lightning)")
+            print(f"  - UWAGA: Wymaga recznej petli treningowej (brak wsparcia Lightning)")
         except ImportError:
             pass
 
@@ -365,5 +365,5 @@ def print_device_info() -> None:
 
     # Rekomendacja
     device = get_device("auto")
-    print(f"\nRekomendowane urządzenie: {device}")
+    print(f"\nRekomendowane urzadzenie: {device}")
     print("=" * 50 + "\n")
