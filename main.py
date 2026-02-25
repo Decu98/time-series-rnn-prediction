@@ -44,14 +44,10 @@ from config.config import (
 from src.data_generation.synthetic import (
     generate_dataset, save_dataset, load_dataset,
     generate_dimensionless_dataset, save_dimensionless_dataset, load_dimensionless_dataset,
-    DimensionlessOscillator
 )
 from src.preprocessing.preprocessor import DataPreprocessor
-from src.dataset.time_series_dataset import (
-    TimeSeriesDataModule,
-    ConditionedTimeSeriesDataModule
-)
-from src.models.seq2seq import Seq2SeqModel, ConditionedSeq2SeqModel
+from src.dataset.time_series_dataset import TimeSeriesDataModule
+from src.models.seq2seq import Seq2SeqModel
 from src.evaluation.metrics import compute_all_metrics
 from src.evaluation.visualization import (
     plot_prediction_with_uncertainty,
@@ -243,14 +239,6 @@ def parse_arguments() -> argparse.Namespace:
         help='Zakres wspolczynnika tlumienia zeta dla parametryzacji bezwymiarowej'
     )
     parser.add_argument(
-        '--omega0-range',
-        type=float,
-        nargs=2,
-        default=[1.0, 20.0],
-        metavar=('MIN', 'MAX'),
-        help='Zakres czestosci wlasnej omega0 [rad/s] dla parametryzacji bezwymiarowej'
-    )
-    parser.add_argument(
         '--tau-max',
         type=float,
         default=50.0,
@@ -348,7 +336,6 @@ def generate_dimensionless_data(args: argparse.Namespace) -> Dict[str, np.ndarra
     print(f"  - Czas bezwymiarowy tau_max: {args.tau_max}")
     print(f"  - Krok czasowy dtau: {args.dtau}")
     print(f"  - Zakres zeta: [{args.zeta_range[0]}, {args.zeta_range[1]}]")
-    print(f"  - Zakres omega0: [{args.omega0_range[0]}, {args.omega0_range[1]}] rad/s")
     print(f"  - Szum pomiarowy: sigma = {args.noise_std}")
     print(f"  - Stale warunki poczatkowe: x0=1, dx/dtau(0)=0")
 
@@ -357,7 +344,6 @@ def generate_dimensionless_data(args: argparse.Namespace) -> Dict[str, np.ndarra
         dtau=args.dtau,
         tau_max=args.tau_max,
         zeta_range=tuple(args.zeta_range),
-        omega_0_range=tuple(args.omega0_range),
         noise_std=args.noise_std,
         seed=args.seed
     )
@@ -388,8 +374,7 @@ def plot_dimensionless_trajectory(
     import matplotlib.pyplot as plt
 
     # Wybór kilku trajektorii o różnych ζ
-    params = dataset['params']
-    zetas = params[:, 0]
+    zetas = dataset['params']
 
     # Sortowanie po ζ i wybór kilku reprezentatywnych
     sorted_indices = np.argsort(zetas)
@@ -408,7 +393,7 @@ def plot_dimensionless_trajectory(
 
     # 1. Położenie w czasie bezwymiarowym
     for i, idx in enumerate(selected_indices):
-        zeta = params[idx, 0]
+        zeta = zetas[idx]
         x = trajectories[idx, :, 0]
         axes[0, 0].plot(tau, x, color=colors[i], linewidth=1.2, label=f'ζ={zeta:.3f}')
 
@@ -421,7 +406,7 @@ def plot_dimensionless_trajectory(
 
     # 2. Prędkość bezwymiarowa
     for i, idx in enumerate(selected_indices):
-        zeta = params[idx, 0]
+        zeta = zetas[idx]
         v = trajectories[idx, :, 1]
         axes[0, 1].plot(tau, v, color=colors[i], linewidth=1.2, label=f'ζ={zeta:.3f}')
 
@@ -434,7 +419,7 @@ def plot_dimensionless_trajectory(
 
     # 3. Portret fazowy
     for i, idx in enumerate(selected_indices):
-        zeta = params[idx, 0]
+        zeta = zetas[idx]
         x = trajectories[idx, :, 0]
         v = trajectories[idx, :, 1]
         axes[1, 0].plot(x, v, color=colors[i], linewidth=1.2, label=f'ζ={zeta:.3f}')
@@ -742,53 +727,35 @@ def create_datamodule(
     trajectories: np.ndarray,
     args: argparse.Namespace,
     preprocessor: DataPreprocessor,
-    params: Optional[np.ndarray] = None
 ) -> pl.LightningDataModule:
     """
     Tworzy DataModule z przetworzonymi danymi.
 
-    Obsługuje zarówno dane wymiarowe jak i bezwymiarowe (z parametrami).
+    Zarówno tryb wymiarowy jak i bezwymiarowy używają tego samego
+    TimeSeriesDataModule — różnią się tylko sposobem generacji danych.
 
     Args:
         trajectories: Surowe trajektorie
         args: Argumenty wiersza poleceń
         preprocessor: Dopasowany preprocessor
-        params: Parametry warunkujące (dla trybu bezwymiarowego)
 
     Returns:
-        TimeSeriesDataModule lub ConditionedTimeSeriesDataModule
+        TimeSeriesDataModule
     """
     # Normalizacja danych
     normalized = preprocessor.transform(trajectories)
 
-    if args.dimensionless and params is not None:
-        # Tworzenie DataModule z parametrami warunkującymi
-        datamodule = ConditionedTimeSeriesDataModule(
-            data=normalized,
-            params=params,
-            T_in=args.T_in,
-            T_out=args.T_out,
-            batch_size=args.batch_size,
-            train_ratio=0.7,
-            val_ratio=0.15,
-            stride=1,
-            num_workers=args.num_workers,
-            seed=args.seed,
-            normalize_params=True
-        )
-    else:
-        # Standardowy DataModule
-        datamodule = TimeSeriesDataModule(
-            data=normalized,
-            T_in=args.T_in,
-            T_out=args.T_out,
-            batch_size=args.batch_size,
-            train_ratio=0.7,
-            val_ratio=0.15,
-            stride=1,
-            num_workers=args.num_workers,
-            seed=args.seed
-        )
+    datamodule = TimeSeriesDataModule(
+        data=normalized,
+        T_in=args.T_in,
+        T_out=args.T_out,
+        batch_size=args.batch_size,
+        train_ratio=0.7,
+        val_ratio=0.15,
+        stride=1,
+        num_workers=args.num_workers,
+        seed=args.seed
+    )
 
     return datamodule
 
@@ -797,42 +764,26 @@ def create_model(args: argparse.Namespace) -> pl.LightningModule:
     """
     Tworzy model Seq2Seq.
 
-    Obsługuje zarówno standardowy model jak i model z conditioningiem
-    (dla parametryzacji bezwymiarowej).
+    Zarówno tryb wymiarowy jak i bezwymiarowy używają tego samego
+    Seq2SeqModel — sieć dostaje [x, v] i sama wnioskuje dynamikę.
 
     Args:
         args: Argumenty wiersza poleceń
 
     Returns:
-        Model Seq2Seq lub ConditionedSeq2Seq
+        Model Seq2Seq
     """
-    if args.dimensionless:
-        # Model z parametrami warunkującymi [zeta, omega_0]
-        model = ConditionedSeq2SeqModel(
-            input_size=2,  # [x, dx/dτ]
-            hidden_size=args.hidden_size,
-            num_layers=args.num_layers,
-            T_out=args.T_out,
-            param_size=2,  # [zeta, omega_0]
-            dropout=args.dropout,
-            learning_rate=args.learning_rate,
-            teacher_forcing_ratio=args.teacher_forcing_ratio,
-            teacher_forcing_decay=args.teacher_forcing_decay,
-            gradient_clip_val=args.gradient_clip
-        )
-    else:
-        # Standardowy model
-        model = Seq2SeqModel(
-            input_size=2,  # [x, v]
-            hidden_size=args.hidden_size,
-            num_layers=args.num_layers,
-            T_out=args.T_out,
-            dropout=args.dropout,
-            learning_rate=args.learning_rate,
-            teacher_forcing_ratio=args.teacher_forcing_ratio,
-            teacher_forcing_decay=args.teacher_forcing_decay,
-            gradient_clip_val=args.gradient_clip
-        )
+    model = Seq2SeqModel(
+        input_size=2,  # [x, v] lub [x, dx/dτ]
+        hidden_size=args.hidden_size,
+        num_layers=args.num_layers,
+        T_out=args.T_out,
+        dropout=args.dropout,
+        learning_rate=args.learning_rate,
+        teacher_forcing_ratio=args.teacher_forcing_ratio,
+        teacher_forcing_decay=args.teacher_forcing_decay,
+        gradient_clip_val=args.gradient_clip
+    )
 
     return model
 
@@ -927,9 +878,6 @@ def train(args: argparse.Namespace) -> None:
     dataset = load_or_generate_data(args)
     trajectories = dataset['trajectories']
 
-    # Parametry warunkujące (dla trybu bezwymiarowego)
-    params = dataset.get('params', None)
-
     # Preprocessing
     print("\nPreprocessing danych...")
     preprocessor = DataPreprocessor(apply_filtering=False)
@@ -940,20 +888,14 @@ def train(args: argparse.Namespace) -> None:
 
     # DataModule
     print("\nTworzenie DataModule...")
-    datamodule = create_datamodule(trajectories, args, preprocessor, params)
+    datamodule = create_datamodule(trajectories, args, preprocessor)
     datamodule.setup()
-
-    # Zapisanie statystyk normalizacji parametrów (dla trybu bezwymiarowego)
-    if args.dimensionless and hasattr(datamodule, 'save_params_stats'):
-        datamodule.save_params_stats(str(output_dir / 'params_stats.npz'))
 
     info = datamodule.get_data_info()
     print(f"  - Trajektorie: {info['num_trajectories']}")
     print(f"  - Próbki treningowe: {info['train_samples']}")
     print(f"  - Próbki walidacyjne: {info['val_samples']}")
     print(f"  - Próbki testowe: {info['test_samples']}")
-    if args.dimensionless:
-        print(f"  - Rozmiar parametrów: {info.get('param_size', 'N/A')}")
 
     # Model
     print("\nTworzenie modelu...")
@@ -1026,7 +968,6 @@ def test(args: argparse.Namespace) -> None:
     # Ładowanie danych
     dataset = load_or_generate_data(args)
     trajectories = dataset['trajectories']
-    params = dataset.get('params', None)
 
     # Preprocessor
     checkpoint_dir = Path(args.checkpoint).parent.parent
@@ -1041,22 +982,12 @@ def test(args: argparse.Namespace) -> None:
         preprocessor.fit(trajectories)
 
     # DataModule
-    datamodule = create_datamodule(trajectories, args, preprocessor, params)
-
-    # Ładowanie statystyk normalizacji parametrów (dla trybu bezwymiarowego)
-    if args.dimensionless:
-        params_stats_path = checkpoint_dir / 'params_stats.npz'
-        if params_stats_path.exists() and hasattr(datamodule, 'load_params_stats'):
-            datamodule.load_params_stats(str(params_stats_path))
-
+    datamodule = create_datamodule(trajectories, args, preprocessor)
     datamodule.setup('test')
 
     # Model
     print(f"\nŁadowanie modelu z: {args.checkpoint}")
-    if args.dimensionless:
-        model = ConditionedSeq2SeqModel.load_from_checkpoint(args.checkpoint)
-    else:
-        model = Seq2SeqModel.load_from_checkpoint(args.checkpoint)
+    model = Seq2SeqModel.load_from_checkpoint(args.checkpoint)
     model.eval()
 
     # Ewaluacja
@@ -1186,7 +1117,20 @@ def visualize_results(
 
     model.eval()
     device = next(model.parameters()).device
-    dt = dataset['time'][1] - dataset['time'][0]
+    # Obsługa obu formatów: 'time' (wymiarowy) i 'tau' (bezwymiarowy)
+    time_key = 'tau' if 'tau' in dataset else 'time'
+    dt = dataset[time_key][1] - dataset[time_key][0]
+
+    # Określenie etykiet na podstawie typu danych
+    is_dimensionless = 'tau' in dataset
+    if is_dimensionless:
+        time_label = 'Czas bezwymiarowy τ'
+        pos_label = 'Położenie x'
+        vel_label = 'Prędkość dx/dτ'
+    else:
+        time_label = 'Czas [s]'
+        pos_label = 'Położenie x [m]'
+        vel_label = 'Prędkość v [m/s]'
 
     # Pobranie przykładowego batcha
     datamodule.setup('test')
@@ -1223,7 +1167,7 @@ def visualize_results(
     # Wybór losowej pełnej trajektorii z datasetu do wizualizacji
     traj_idx = np.random.randint(0, dataset['trajectories'].shape[0])
     full_trajectory = dataset['trajectories'][traj_idx]  # (num_steps, 2)
-    full_time = dataset['time']
+    full_time = dataset[time_key]
 
     # Trajektoria z datasetu jest już w oryginalnych jednostkach (nie znormalizowana)
     full_trajectory_denorm = full_trajectory
@@ -1257,9 +1201,10 @@ def visualize_results(
         mu_seq=mu_full_denorm,
         sigma_seq=sigma_full_denorm,
         feature_idx=0,
-        feature_name='Położenie x [m]',
+        feature_name=pos_label,
         title=f'Pełna trajektoria #{traj_idx} z predykcją położenia',
-        save_path=str(plots_dir / 'full_trajectory_position.png')
+        save_path=str(plots_dir / 'full_trajectory_position.png'),
+        time_label=time_label
     )
     plt.close(fig1)
 
@@ -1274,9 +1219,10 @@ def visualize_results(
         mu_seq=mu_full_denorm,
         sigma_seq=sigma_full_denorm,
         feature_idx=1,
-        feature_name='Prędkość v [m/s]',
+        feature_name=vel_label,
         title=f'Pełna trajektoria #{traj_idx} z predykcją prędkości',
-        save_path=str(plots_dir / 'full_trajectory_velocity.png')
+        save_path=str(plots_dir / 'full_trajectory_velocity.png'),
+        time_label=time_label
     )
     plt.close(fig2)
 
@@ -1290,9 +1236,10 @@ def visualize_results(
         mu_seq=mu_denorm,
         sigma_seq=sigma_denorm,
         feature_idx=0,
-        feature_name='Położenie x [m]',
+        feature_name=pos_label,
         title='Predykcja położenia z przedziałami ufności (zoom)',
-        save_path=str(plots_dir / 'prediction_position_zoom.png')
+        save_path=str(plots_dir / 'prediction_position_zoom.png'),
+        time_label=time_label
     )
     plt.close(fig3)
 
@@ -1306,9 +1253,10 @@ def visualize_results(
         mu_seq=mu_denorm,
         sigma_seq=sigma_denorm,
         feature_idx=1,
-        feature_name='Prędkość v [m/s]',
+        feature_name=vel_label,
         title='Predykcja prędkości z przedziałami ufności (zoom)',
-        save_path=str(plots_dir / 'prediction_velocity_zoom.png')
+        save_path=str(plots_dir / 'prediction_velocity_zoom.png'),
+        time_label=time_label
     )
     plt.close(fig4)
 
@@ -1320,7 +1268,9 @@ def visualize_results(
         mu=mu_denorm,
         sigma=sigma_denorm,
         title='Porównanie predykcji',
-        save_path=str(plots_dir / 'prediction_comparison.png')
+        save_path=str(plots_dir / 'prediction_comparison.png'),
+        time_label=time_label,
+        feature_names=[pos_label, vel_label]
     )
     plt.close(fig5)
 
@@ -1330,7 +1280,9 @@ def visualize_results(
         time=time_output,
         sigma=sigma_denorm,
         title='Ewolucja niepewności w czasie',
-        save_path=str(plots_dir / 'uncertainty_evolution.png')
+        save_path=str(plots_dir / 'uncertainty_evolution.png'),
+        time_label=time_label,
+        feature_names=['σ(x)', 'σ(dx/dτ)'] if is_dimensionless else None
     )
     plt.close(fig6)
 
@@ -1343,7 +1295,9 @@ def visualize_results(
         trajectories=[full_input, full_pred],
         labels=['Rzeczywista', 'Predykcja'],
         title='Portret fazowy - porównanie trajektorii',
-        save_path=str(plots_dir / 'phase_space.png')
+        save_path=str(plots_dir / 'phase_space.png'),
+        xlabel=pos_label,
+        ylabel=vel_label
     )
     plt.close(fig7)
 
@@ -1631,6 +1585,250 @@ def run_prediction_for_oscillator(
             f.write(f"  {k}: {v}\n")
 
 
+def run_prediction_for_dimensionless(
+    model: Seq2SeqModel,
+    preprocessor: DataPreprocessor,
+    device: torch.device,
+    output_dir: Path,
+    zeta: float,
+    tau: np.ndarray,
+    T_in: int,
+    T_out: int,
+    num_predictions: int,
+    recursive_steps: int
+) -> None:
+    """
+    Wykonuje predykcje dla oscylatora bezwymiarowego.
+
+    Args:
+        model: Model do predykcji
+        preprocessor: Preprocessor danych
+        device: Urządzenie (CPU/GPU)
+        output_dir: Katalog wyjściowy
+        zeta: Współczynnik tłumienia bezwymiarowy
+        tau: Wektor czasu bezwymiarowego
+        T_in: Długość okna wejściowego
+        T_out: Długość horyzontu predykcji
+        num_predictions: Liczba predykcji
+        recursive_steps: Liczba kroków rekurencyjnych
+    """
+    import matplotlib.pyplot as plt
+    from src.data_generation.synthetic import DimensionlessOscillator
+
+    dtau = tau[1] - tau[0]
+
+    # Etykiety bezwymiarowe
+    time_label = 'Czas bezwymiarowy τ'
+    pos_label = 'Położenie x'
+    vel_label = 'Prędkość dx/dτ'
+
+    # Tworzenie oscylatora bezwymiarowego
+    oscillator = DimensionlessOscillator(zeta=zeta)
+
+    # Generowanie trajektorii (stałe w.p.: x(0)=1, dx/dτ(0)=0)
+    x, v = oscillator.generate_trajectory(tau)
+    trajectory = np.column_stack([x, v])
+
+    # Normalizacja
+    trajectory_norm = preprocessor.transform(trajectory)
+
+    # Sprawdzenie długości
+    max_start = len(tau) - T_in - T_out
+    if max_start <= 0:
+        print(f"  BŁĄD: Trajektoria zbyt krótka dla T_in={T_in}, T_out={T_out}")
+        return
+
+    # Równomierne rozmieszczenie punktów predykcji
+    start_indices = np.linspace(0, max_start, num_predictions, dtype=int)
+
+    print(f"\n  Wykonywanie {num_predictions} predykcji (ζ={zeta:.4f})...")
+
+    predictions_list = []
+    for i, start_idx in enumerate(start_indices):
+        input_seq = trajectory_norm[start_idx:start_idx + T_in]
+        input_tensor = torch.FloatTensor(input_seq).unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            pred = model.predict_trajectory(input_tensor, num_samples=50)
+
+        mu = pred['mu'].cpu().numpy()
+        sigma = pred['sigma'].cpu().numpy()
+        mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu, sigma)
+
+        predictions_list.append({
+            'start_idx': start_idx,
+            'mu': mu_denorm,
+            'sigma': sigma_denorm
+        })
+
+        print(f"    Predykcja {i+1}/{num_predictions}: τ_start={tau[start_idx]:.2f}")
+
+    # Parametry do wyświetlenia w tytule
+    oscillator_params = {'zeta': round(zeta, 4)}
+
+    # Wizualizacja - pełne wykresy
+    print(f"  Generowanie wizualizacji (ζ={zeta:.4f})...")
+
+    fig1 = plot_multi_prediction_trajectory(
+        full_trajectory=trajectory,
+        full_time=tau,
+        predictions=predictions_list,
+        T_in=T_in,
+        T_out=T_out,
+        feature_idx=0,
+        feature_name=pos_label,
+        title=f'Predykcje położenia - bezwymiarowy (ζ={zeta:.4f}, {num_predictions} punktów)',
+        save_path=str(output_dir / 'multi_prediction_position.png'),
+        oscillator_params=oscillator_params,
+        time_label=time_label
+    )
+    plt.close(fig1)
+
+    fig2 = plot_multi_prediction_trajectory(
+        full_trajectory=trajectory,
+        full_time=tau,
+        predictions=predictions_list,
+        T_in=T_in,
+        T_out=T_out,
+        feature_idx=1,
+        feature_name=vel_label,
+        title=f'Predykcje prędkości - bezwymiarowy (ζ={zeta:.4f}, {num_predictions} punktów)',
+        save_path=str(output_dir / 'multi_prediction_velocity.png'),
+        oscillator_params=oscillator_params,
+        time_label=time_label
+    )
+    plt.close(fig2)
+
+    # Zoomy
+    zooms_dir = output_dir / 'zooms'
+    zooms_dir.mkdir(exist_ok=True)
+
+    for i, pred in enumerate(predictions_list):
+        start_idx = pred['start_idx']
+        mu = pred['mu']
+        sigma = pred['sigma']
+
+        time_input = tau[start_idx:start_idx + T_in]
+        time_output = tau[start_idx + T_in:start_idx + T_in + T_out]
+        input_seq = trajectory[start_idx:start_idx + T_in]
+        target_seq = trajectory[start_idx + T_in:start_idx + T_in + T_out]
+
+        fig_zoom_x = plot_prediction_with_uncertainty(
+            time_input=time_input,
+            time_output=time_output,
+            input_seq=input_seq,
+            target_seq=target_seq,
+            mu_seq=mu,
+            sigma_seq=sigma,
+            feature_idx=0,
+            feature_name=pos_label,
+            title=f'Predykcja #{i+1} - położenie (τ={tau[start_idx]:.1f})',
+            save_path=str(zooms_dir / f'zoom_{i+1}_position.png'),
+            time_label=time_label
+        )
+        plt.close(fig_zoom_x)
+
+        fig_zoom_v = plot_prediction_with_uncertainty(
+            time_input=time_input,
+            time_output=time_output,
+            input_seq=input_seq,
+            target_seq=target_seq,
+            mu_seq=mu,
+            sigma_seq=sigma,
+            feature_idx=1,
+            feature_name=vel_label,
+            title=f'Predykcja #{i+1} - prędkość (τ={tau[start_idx]:.1f})',
+            save_path=str(zooms_dir / f'zoom_{i+1}_velocity.png'),
+            time_label=time_label
+        )
+        plt.close(fig_zoom_v)
+
+    # Predykcja rekurencyjna
+    if recursive_steps > 0:
+        print(f"  Predykcja rekurencyjna ({recursive_steps} kroków)...")
+
+        recursive_dir = output_dir / 'recursive'
+        recursive_dir.mkdir(exist_ok=True)
+
+        initial_input = trajectory[:T_in]
+        initial_input_norm = trajectory_norm[:T_in]
+
+        recursive_predictions = []
+        current_input_norm = initial_input_norm.copy()
+
+        for step in range(recursive_steps):
+            input_tensor = torch.FloatTensor(current_input_norm).unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                pred = model.predict_trajectory(input_tensor, num_samples=50)
+
+            mu_norm = pred['mu'].cpu().numpy()
+            sigma_norm = pred['sigma'].cpu().numpy()
+            mu_denorm, sigma_denorm = preprocessor.inverse_transform_gaussian(mu_norm, sigma_norm)
+
+            recursive_predictions.append({
+                'mu': mu_denorm,
+                'sigma': sigma_denorm,
+                'mu_norm': mu_norm,
+                'time_start': (T_in + step * T_out) * dtau
+            })
+
+            print(f"    Krok {step+1}/{recursive_steps}: τ={recursive_predictions[-1]['time_start']:.1f}")
+
+            if T_out >= T_in:
+                current_input_norm = mu_norm[-T_in:]
+            else:
+                overlap = T_in - T_out
+                current_input_norm = np.concatenate([
+                    current_input_norm[-overlap:],
+                    mu_norm
+                ], axis=0)
+
+        fig_rec_x = plot_recursive_prediction(
+            full_trajectory=trajectory,
+            full_time=tau,
+            initial_input=initial_input,
+            recursive_predictions=recursive_predictions,
+            T_in=T_in,
+            T_out=T_out,
+            feature_idx=0,
+            feature_name=pos_label,
+            title=f'Predykcja rekurencyjna - bezwymiarowy ζ={zeta:.4f} ({recursive_steps} kroków)',
+            save_path=str(recursive_dir / 'recursive_position.png'),
+            oscillator_params=oscillator_params,
+            time_label=time_label
+        )
+        plt.close(fig_rec_x)
+
+        fig_rec_v = plot_recursive_prediction(
+            full_trajectory=trajectory,
+            full_time=tau,
+            initial_input=initial_input,
+            recursive_predictions=recursive_predictions,
+            T_in=T_in,
+            T_out=T_out,
+            feature_idx=1,
+            feature_name=vel_label,
+            title=f'Predykcja rekurencyjna - bezwymiarowy ζ={zeta:.4f} ({recursive_steps} kroków)',
+            save_path=str(recursive_dir / 'recursive_velocity.png'),
+            oscillator_params=oscillator_params,
+            time_label=time_label
+        )
+        plt.close(fig_rec_v)
+
+    # Zapisanie parametrów
+    params_file = output_dir / 'parameters.txt'
+    with open(params_file, 'w', encoding='utf-8') as f:
+        f.write(f"Typ: oscylator bezwymiarowy\n")
+        f.write(f"zeta: {zeta}\n")
+        f.write(f"T_in: {T_in}\n")
+        f.write(f"T_out: {T_out}\n")
+        f.write(f"dtau: {dtau}\n")
+        f.write(f"tau_max: {tau[-1]}\n")
+        f.write(f"num_predictions: {num_predictions}\n")
+        f.write(f"recursive_steps: {recursive_steps}\n")
+
+
 def predict(args: argparse.Namespace) -> None:
     """
     Przeprowadza predykcję na trajektoriach syntetycznych.
@@ -1684,101 +1882,151 @@ def predict(args: argparse.Namespace) -> None:
     else:
         print("UWAGA: Brak pliku preprocessora - używam domyślnej normalizacji")
 
-    # Generowanie wektora czasu
-    dt = args.dt
-    t_max = args.t_max
-    t = np.arange(0, t_max, dt)
+    if args.dimensionless:
+        # Tryb bezwymiarowy
+        dtau = args.dtau
+        tau_max = args.tau_max
+        tau = np.arange(0, tau_max, dtau)
 
-    print(f"Długość trajektorii: {len(t)} kroków ({t_max}s przy dt={dt}s)")
+        print(f"Długość trajektorii: {len(tau)} kroków (τ_max={tau_max} przy dτ={dtau})")
 
-    # Losowe parametry oscylatora (wspólne dla obu typów)
-    mass = np.random.uniform(0.5, 2.0)
-    damping = np.random.uniform(0.1, 0.8)
-    stiffness = np.random.uniform(1.0, 5.0)
-    x0 = np.random.uniform(-2.0, 2.0)
-    v0 = np.random.uniform(-1.0, 1.0)
+        # Losowy współczynnik tłumienia z podanego zakresu
+        zeta = np.random.uniform(args.zeta_range[0], args.zeta_range[1])
+        zeta = round(zeta, 4)
 
-    base_params = {
-        'mass': round(mass, 2),
-        'damping': round(damping, 2),
-        'stiffness': round(stiffness, 2),
-        'x0': round(x0, 2),
-        'v0': round(v0, 2)
-    }
+        print(f"\nParametry oscylatora bezwymiarowego:")
+        print(f"  - ζ (zeta): {zeta}")
+        print(f"  - x(0) = 1.0, dx/dτ(0) = 0.0")
 
-    print(f"\nParametry bazowe oscylatora:")
-    print(f"  - masa (m): {base_params['mass']}")
-    print(f"  - sztywność (k): {base_params['stiffness']}")
-    print(f"  - x0: {base_params['x0']}")
-    print(f"  - v0: {base_params['v0']}")
+        print("\n" + "-" * 40)
+        print(f"OSCYLATOR BEZWYMIAROWY (ζ={zeta})")
+        print("-" * 40)
 
-    # Test dla oscylatora TŁUMIONEGO
-    print("\n" + "-" * 40)
-    print("OSCYLATOR TŁUMIONY")
-    print("-" * 40)
-    print(f"  - tłumienie (c): {base_params['damping']}")
+        run_prediction_for_dimensionless(
+            model=model,
+            preprocessor=preprocessor,
+            device=device,
+            output_dir=output_dir,
+            zeta=zeta,
+            tau=tau,
+            T_in=T_in,
+            T_out=T_out,
+            num_predictions=args.num_predictions,
+            recursive_steps=args.recursive_steps
+        )
 
-    damped_dir = output_dir / 'damped'
-    damped_dir.mkdir(exist_ok=True)
+        # Zapisanie parametrów głównych
+        params_file = output_dir / 'parameters.txt'
+        with open(params_file, 'w', encoding='utf-8') as f:
+            f.write(f"Tryb: bezwymiarowy (dimensionless)\n")
+            f.write(f"Seed: {seed}\n")
+            f.write(f"T_in: {T_in}\n")
+            f.write(f"T_out: {T_out}\n")
+            f.write(f"dtau: {dtau}\n")
+            f.write(f"tau_max: {tau_max}\n")
+            f.write(f"zeta: {zeta}\n")
+            f.write(f"num_predictions: {args.num_predictions}\n")
+            f.write(f"recursive_steps: {args.recursive_steps}\n")
 
-    damped_params = base_params.copy()
-    run_prediction_for_oscillator(
-        model=model,
-        preprocessor=preprocessor,
-        device=device,
-        output_dir=damped_dir,
-        oscillator_params=damped_params,
-        t=t,
-        T_in=T_in,
-        T_out=T_out,
-        num_predictions=args.num_predictions,
-        recursive_steps=args.recursive_steps,
-        oscillator_type='damped'
-    )
+        print(f"\n" + "=" * 40)
+        print(f"Wyniki zapisane w: {output_dir}")
 
-    # Test dla oscylatora BEZ TŁUMIENIA
-    print("\n" + "-" * 40)
-    print("OSCYLATOR BEZ TŁUMIENIA")
-    print("-" * 40)
-    print(f"  - tłumienie (c): 0.0")
+    else:
+        # Tryb wymiarowy
+        dt = args.dt
+        t_max = args.t_max
+        t = np.arange(0, t_max, dt)
 
-    undamped_dir = output_dir / 'undamped'
-    undamped_dir.mkdir(exist_ok=True)
+        print(f"Długość trajektorii: {len(t)} kroków ({t_max}s przy dt={dt}s)")
 
-    undamped_params = base_params.copy()
-    run_prediction_for_oscillator(
-        model=model,
-        preprocessor=preprocessor,
-        device=device,
-        output_dir=undamped_dir,
-        oscillator_params=undamped_params,
-        t=t,
-        T_in=T_in,
-        T_out=T_out,
-        num_predictions=args.num_predictions,
-        recursive_steps=args.recursive_steps,
-        oscillator_type='undamped'
-    )
+        # Losowe parametry oscylatora (wspólne dla obu typów)
+        mass = np.random.uniform(0.5, 2.0)
+        damping = np.random.uniform(0.1, 0.8)
+        stiffness = np.random.uniform(1.0, 5.0)
+        x0 = np.random.uniform(-2.0, 2.0)
+        v0 = np.random.uniform(-1.0, 1.0)
 
-    # Zapisanie parametrów głównych
-    params_file = output_dir / 'parameters.txt'
-    with open(params_file, 'w', encoding='utf-8') as f:
-        f.write(f"Seed: {seed}\n")
-        f.write(f"T_in: {T_in}\n")
-        f.write(f"T_out: {T_out}\n")
-        f.write(f"dt: {dt}\n")
-        f.write(f"t_max: {t_max}\n")
-        f.write(f"num_predictions: {args.num_predictions}\n")
-        f.write(f"recursive_steps: {args.recursive_steps}\n")
-        f.write(f"\nParametry bazowe oscylatora:\n")
-        for k, v in base_params.items():
-            f.write(f"  {k}: {v}\n")
-        f.write(f"\nTestowane typy: damped, undamped\n")
+        base_params = {
+            'mass': round(mass, 2),
+            'damping': round(damping, 2),
+            'stiffness': round(stiffness, 2),
+            'x0': round(x0, 2),
+            'v0': round(v0, 2)
+        }
 
-    print(f"\n" + "=" * 40)
-    print(f"Wyniki zapisane w: {output_dir}")
-    print(f"  - damped/    (oscylator tłumiony)")
-    print(f"  - undamped/  (oscylator bez tłumienia)")
+        print(f"\nParametry bazowe oscylatora:")
+        print(f"  - masa (m): {base_params['mass']}")
+        print(f"  - sztywność (k): {base_params['stiffness']}")
+        print(f"  - x0: {base_params['x0']}")
+        print(f"  - v0: {base_params['v0']}")
+
+        # Test dla oscylatora TŁUMIONEGO
+        print("\n" + "-" * 40)
+        print("OSCYLATOR TŁUMIONY")
+        print("-" * 40)
+        print(f"  - tłumienie (c): {base_params['damping']}")
+
+        damped_dir = output_dir / 'damped'
+        damped_dir.mkdir(exist_ok=True)
+
+        damped_params = base_params.copy()
+        run_prediction_for_oscillator(
+            model=model,
+            preprocessor=preprocessor,
+            device=device,
+            output_dir=damped_dir,
+            oscillator_params=damped_params,
+            t=t,
+            T_in=T_in,
+            T_out=T_out,
+            num_predictions=args.num_predictions,
+            recursive_steps=args.recursive_steps,
+            oscillator_type='damped'
+        )
+
+        # Test dla oscylatora BEZ TŁUMIENIA
+        print("\n" + "-" * 40)
+        print("OSCYLATOR BEZ TŁUMIENIA")
+        print("-" * 40)
+        print(f"  - tłumienie (c): 0.0")
+
+        undamped_dir = output_dir / 'undamped'
+        undamped_dir.mkdir(exist_ok=True)
+
+        undamped_params = base_params.copy()
+        run_prediction_for_oscillator(
+            model=model,
+            preprocessor=preprocessor,
+            device=device,
+            output_dir=undamped_dir,
+            oscillator_params=undamped_params,
+            t=t,
+            T_in=T_in,
+            T_out=T_out,
+            num_predictions=args.num_predictions,
+            recursive_steps=args.recursive_steps,
+            oscillator_type='undamped'
+        )
+
+        # Zapisanie parametrów głównych
+        params_file = output_dir / 'parameters.txt'
+        with open(params_file, 'w', encoding='utf-8') as f:
+            f.write(f"Seed: {seed}\n")
+            f.write(f"T_in: {T_in}\n")
+            f.write(f"T_out: {T_out}\n")
+            f.write(f"dt: {dt}\n")
+            f.write(f"t_max: {t_max}\n")
+            f.write(f"num_predictions: {args.num_predictions}\n")
+            f.write(f"recursive_steps: {args.recursive_steps}\n")
+            f.write(f"\nParametry bazowe oscylatora:\n")
+            for k, v in base_params.items():
+                f.write(f"  {k}: {v}\n")
+            f.write(f"\nTestowane typy: damped, undamped\n")
+
+        print(f"\n" + "=" * 40)
+        print(f"Wyniki zapisane w: {output_dir}")
+        print(f"  - damped/    (oscylator tłumiony)")
+        print(f"  - undamped/  (oscylator bez tłumienia)")
 
 
 def main() -> None:

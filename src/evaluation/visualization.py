@@ -26,7 +26,8 @@ def plot_prediction_with_uncertainty(
     confidence_levels: Optional[List[float]] = None,
     figsize: Tuple[int, int] = (12, 6),
     title: Optional[str] = None,
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    time_label: str = 'Czas [s]'
 ) -> plt.Figure:
     """
     Tworzy wykres predykcji z przedziałami ufności.
@@ -121,7 +122,7 @@ def plot_prediction_with_uncertainty(
     )
 
     # Formatowanie
-    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_xlabel(time_label, fontsize=12)
     ax.set_ylabel(f'{feature_name}', fontsize=12)
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3)
@@ -211,7 +212,9 @@ def plot_phase_space(
     colors: Optional[List[str]] = None,
     figsize: Tuple[int, int] = (8, 8),
     title: str = 'Portret fazowy',
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    xlabel: str = 'Położenie x [m]',
+    ylabel: str = 'Prędkość v [m/s]'
 ) -> plt.Figure:
     """
     Tworzy wykres portretu fazowego (x vs v).
@@ -252,8 +255,8 @@ def plot_phase_space(
         # Oznaczenie punktu końcowego
         ax.scatter(x[-1], v[-1], color=color, s=50, marker='s', zorder=5)
 
-    ax.set_xlabel('Położenie x [m]', fontsize=12)
-    ax.set_ylabel('Prędkość v [m/s]', fontsize=12)
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
     ax.set_title(title, fontsize=14)
     ax.legend(fontsize=10, loc='best')
     ax.grid(True, alpha=0.3)
@@ -274,7 +277,9 @@ def plot_prediction_comparison(
     sigma: np.ndarray,
     figsize: Tuple[int, int] = (14, 6),
     title: str = 'Porównanie predykcji',
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    time_label: str = 'Czas [s]',
+    feature_names: Optional[List[str]] = None
 ) -> plt.Figure:
     """
     Tworzy wykres porównujący predykcje dla obu cech (x i v).
@@ -301,7 +306,8 @@ def plot_prediction_comparison(
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
-    feature_names = ['Położenie x [m]', 'Prędkość v [m/s]']
+    if feature_names is None:
+        feature_names = ['Położenie x [m]', 'Prędkość v [m/s]']
     feature_labels = ['x', 'v']
 
     for idx, (ax, name, label) in enumerate(zip(axes, feature_names, feature_labels)):
@@ -323,7 +329,7 @@ def plot_prediction_comparison(
         ax.plot(time, target[:, idx], 'g-', linewidth=2, label='Rzeczywiste')
         ax.plot(time, mu[:, idx], 'r--', linewidth=2, label='Predykcja')
 
-        ax.set_xlabel('Czas [s]', fontsize=11)
+        ax.set_xlabel(time_label, fontsize=11)
         ax.set_ylabel(name, fontsize=11)
         ax.set_title(f'Predykcja {label}', fontsize=12)
         ax.legend(fontsize=9, loc='best')
@@ -343,7 +349,9 @@ def plot_uncertainty_evolution(
     sigma: np.ndarray,
     figsize: Tuple[int, int] = (10, 5),
     title: str = 'Ewolucja niepewności',
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    time_label: str = 'Czas [s]',
+    feature_names: Optional[List[str]] = None
 ) -> plt.Figure:
     """
     Tworzy wykres pokazujący jak niepewność rośnie w czasie.
@@ -363,13 +371,14 @@ def plot_uncertainty_evolution(
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    feature_names = ['σ(x)', 'σ(v)']
+    if feature_names is None:
+        feature_names = ['σ(x)', 'σ(v)']
     colors = ['blue', 'red']
 
     for idx, (name, color) in enumerate(zip(feature_names, colors)):
         ax.plot(time, sigma[:, idx], color=color, linewidth=2, label=name)
 
-    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_xlabel(time_label, fontsize=12)
     ax.set_ylabel('Odchylenie standardowe σ', fontsize=12)
     ax.set_title(title, fontsize=14)
     ax.legend(fontsize=10)
@@ -395,7 +404,8 @@ def plot_full_trajectory_with_prediction(
     feature_name: str = 'Położenie x [m]',
     figsize: Tuple[int, int] = (16, 8),
     title: Optional[str] = None,
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    time_label: str = 'Czas [s]'
 ) -> plt.Figure:
     """
     Tworzy wykres pełnej trajektorii z zaznaczoną predykcją.
@@ -487,7 +497,7 @@ def plot_full_trajectory_with_prediction(
                alpha=0.1, color='yellow', label='Horyzont predykcji')
 
     # Formatowanie
-    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_xlabel(time_label, fontsize=12)
     ax.set_ylabel(feature_name, fontsize=12)
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
@@ -517,7 +527,8 @@ def plot_recursive_prediction(
     figsize: Tuple[int, int] = (18, 10),
     title: Optional[str] = None,
     save_path: Optional[str] = None,
-    oscillator_params: Optional[Dict] = None
+    oscillator_params: Optional[Dict] = None,
+    time_label: str = 'Czas [s]'
 ) -> plt.Figure:
     """
     Tworzy wykres rekurencyjnej predykcji.
@@ -618,7 +629,7 @@ def plot_recursive_prediction(
                alpha=0.7, label=f'Koniec predykcji ({n_preds} kroków)')
 
     # Formatowanie
-    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_xlabel(time_label, fontsize=12)
     ax.set_ylabel(feature_name, fontsize=12)
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
@@ -656,7 +667,8 @@ def plot_multi_prediction_trajectory(
     figsize: Tuple[int, int] = (16, 10),
     title: Optional[str] = None,
     save_path: Optional[str] = None,
-    oscillator_params: Optional[Dict] = None
+    oscillator_params: Optional[Dict] = None,
+    time_label: str = 'Czas [s]'
 ) -> plt.Figure:
     """
     Tworzy wykres pełnej trajektorii z wieloma predykcjami w różnych punktach.
@@ -748,7 +760,7 @@ def plot_multi_prediction_trajectory(
                    linestyle=':', linewidth=1.5, alpha=0.5)
 
     # Formatowanie
-    ax.set_xlabel('Czas [s]', fontsize=12)
+    ax.set_xlabel(time_label, fontsize=12)
     ax.set_ylabel(feature_name, fontsize=12)
     ax.legend(loc='upper right', fontsize=9, ncol=2)
     ax.grid(True, alpha=0.3)
