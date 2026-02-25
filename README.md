@@ -14,7 +14,7 @@ Projekt implementuje architekture **Encoder-Decoder (Seq2Seq)** oparta na **LSTM
 - Integracja z PyTorch Lightning
 - **Dwa tryby parametryzacji:**
   - Wymiarowa (m, c, k) - klasyczna parametryzacja fizyczna
-  - **Bezwymiarowa (zeta, omega0)** - uniwersalna parametryzacja
+  - **Bezwymiarowa (zeta)** - uniwersalna parametryzacja
 - **Obsluga dwoch typow oscylatorow:** tlumiony i bez tlumienia
 - **Predykcja rekurencyjna** dla dlugoterminowych prognoz
 - Automatyczne testowanie na obu typach oscylatorow
@@ -60,11 +60,11 @@ pip install -r requirements.txt
 │   ├── preprocessing/
 │   │   └── preprocessor.py    # Normalizacja i filtrowanie
 │   ├── dataset/
-│   │   └── time_series_dataset.py  # Dataset i DataModule (w tym Conditioned*)
+│   │   └── time_series_dataset.py  # Dataset i DataModule
 │   ├── models/
-│   │   ├── encoder.py         # Encoder LSTM (z opcjonalnym conditioningiem)
+│   │   ├── encoder.py         # Encoder LSTM
 │   │   ├── decoder.py         # Decoder Gaussowski
-│   │   └── seq2seq.py         # Model Seq2Seq + ConditionedSeq2Seq
+│   │   └── seq2seq.py         # Model Seq2Seq
 │   ├── training/
 │   │   └── losses.py          # Gaussian NLL Loss
 │   └── evaluation/
@@ -149,15 +149,14 @@ gdzie omega_d = sqrt(1 - zeta^2) jest znormalizowana czestoscia tlumiona.
 
 - **Stale warunki poczatkowe:** x(0) = 1, dx/dtau(0) = 0
 - **Dynamika zalezy TYLKO od zeta** (wspolczynnik tlumienia)
-- Model uczy sie uniwersalnych zaleznosci
-- Lepsza generalizacja na rozne uklady fizyczne
-- Parametry: zeta (tlumienie), omega0 (czestotliwosc wlasna)
+- Siec dostaje wylacznie [x, dx/dtau] — bez dodatkowych parametrow
+- Model sam wnioskuje dynamike z sekwencji wejsciowej
 
 #### Zalety parametryzacji bezwymiarowej
 
 - Jeden parametr sterujacy dynamika (zeta)
 - Eliminacja zmiennosci zwiazanej z warunkami poczatkowymi
-- Model kondycjonowany parametrami [zeta, omega0]
+- Siec LSTM uczy sie rozpoznawac tlumienie z ksztaltu trajektorii
 - Uniwersalnosc: ta sama dynamika dla roznych ukladow fizycznych o tym samym zeta
 
 ## Uzycie
@@ -181,7 +180,6 @@ python main.py --mode generate --dimensionless \
     --num-trajectories 1000 \
     --data-path data/dimensionless/dataset.npz \
     --zeta-range 0.0 0.5 \
-    --omega0-range 1.0 20.0 \
     --tau-max 50.0 \
     --dtau 0.1
 ```
@@ -193,7 +191,6 @@ python main.py --mode generate --dimensionless \
 | `--dimensionless` | False | Uzyj parametryzacji bezwymiarowej |
 | `--num-trajectories` | 1000 | Liczba trajektorii |
 | `--zeta-range` | [0.0, 0.5] | Zakres wspolczynnika tlumienia zeta |
-| `--omega0-range` | [1.0, 20.0] | Zakres czestotliwosci omega0 [rad/s] |
 | `--tau-max` | 50.0 | Maksymalny czas bezwymiarowy |
 | `--dtau` | 0.1 | Krok czasowy bezwymiarowy |
 | `--t-max` | 10.0 | Czas symulacji [s] (tryb wymiarowy) |
@@ -323,7 +320,7 @@ python main.py --mode generate --dimensionless \
     --zeta-range 0.0 0.5 \
     --tau-max 50.0 --dtau 0.1
 
-# 3. Trening modelu z conditioningiem
+# 3. Trening modelu
 python main.py --mode train --dimensionless \
     --data-path data/dimensionless/dataset.npz \
     --T-in 50 --T-out 30 \
@@ -356,7 +353,6 @@ outputs/run_20240131_123456/
 │   ├── phase_space.png
 │   └── training_curves.png
 ├── preprocessor_stats.npz
-├── params_stats.npz           # Tylko dla trybu bezwymiarowego
 └── metrics.txt
 ```
 
@@ -393,18 +389,14 @@ Rownanie ruchu: `d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0`
 - Czas bezwymiarowy: tau = omega0*t
 - Stale warunki poczatkowe: x(0)=1, dx/dtau(0)=0
 - Dynamika zalezy tylko od zeta
-- Model kondycjonowany parametrami [zeta, omega0]
+- Siec dostaje wylacznie [x, dx/dtau] — bez parametrow warunkujacych
 
 ## Architektura modelu
 
-### Seq2SeqModel (tryb wymiarowy)
-- Encoder LSTM: przetwarza sekwencje wejsciowa
-- Decoder Gaussowski: generuje predykcje probabilistyczne
-
-### ConditionedSeq2SeqModel (tryb bezwymiarowy)
-- Encoder LSTM z conditioningiem: parametry [zeta, omega0] konkatenowane do wejscia
-- Decoder Gaussowski: generuje predykcje probabilistyczne
-- Parametry warunkujace normalizowane do [0, 1]
+### Seq2SeqModel (oba tryby)
+- Encoder LSTM: przetwarza sekwencje wejsciowa [x, v]
+- Decoder Gaussowski: generuje predykcje probabilistyczne (mu, sigma)
+- Ten sam model dla trybu wymiarowego i bezwymiarowego — roznia sie tylko danymi
 
 ## Urzadzenia obliczeniowe
 

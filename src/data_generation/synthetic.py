@@ -30,10 +30,8 @@ class DimensionlessParams:
 
     Attributes:
         zeta: Współczynnik tłumienia bezwymiarowy ζ ∈ [0, 1)
-        omega_0: Częstość własna nietłumiona [rad/s] (do przeliczenia czasu)
     """
     zeta: float
-    omega_0: float
 
     @property
     def is_underdamped(self) -> bool:
@@ -226,27 +224,23 @@ class DimensionlessOscillator:
     - Lepsza generalizacja na różne układy fizyczne
 
     Attributes:
-        params: Parametry bezwymiarowe oscylatora (ζ, ω₀)
+        params: Parametry bezwymiarowe oscylatora (ζ)
     """
 
     def __init__(
         self,
-        zeta: float = 0.1,
-        omega_0: float = 1.0
+        zeta: float = 0.1
     ):
         """
         Inicjalizacja oscylatora bezwymiarowego.
 
         Args:
             zeta: Współczynnik tłumienia bezwymiarowy ζ ∈ [0, 1)
-            omega_0: Częstość własna nietłumiona [rad/s]
         """
         if zeta < 0:
             raise ValueError("Współczynnik tłumienia ζ musi być nieujemny")
-        if omega_0 <= 0:
-            raise ValueError("Częstość własna ω₀ musi być dodatnia")
 
-        self.params = DimensionlessParams(zeta=zeta, omega_0=omega_0)
+        self.params = DimensionlessParams(zeta=zeta)
 
     def _equations_of_motion(
         self,
@@ -473,7 +467,6 @@ def generate_dimensionless_dataset(
     dtau: float = 0.1,
     tau_max: float = 50.0,
     zeta_range: Tuple[float, float] = (0.0, 0.5),
-    omega_0_range: Tuple[float, float] = (1.0, 20.0),
     noise_std: float = 0.01,
     seed: Optional[int] = None
 ) -> Dict[str, np.ndarray]:
@@ -482,18 +475,13 @@ def generate_dimensionless_dataset(
 
     Każda trajektoria jest generowana z losowym ζ z zadanego zakresu.
     Warunki początkowe są stałe: x(0)=1, dx/dτ(0)=0.
-
-    Korzyści:
-    - Dynamika zależy tylko od ζ (jeden parametr!)
-    - Model uczy się uniwersalnych zależności
-    - Lepsza generalizacja
+    Dynamika zależy TYLKO od ζ — sieć dostaje wyłącznie [x, dx/dτ].
 
     Args:
         num_trajectories: Liczba trajektorii do wygenerowania
         dtau: Krok czasowy bezwymiarowy (τ = ω₀·t)
         tau_max: Maksymalny czas bezwymiarowy
         zeta_range: Zakres współczynnika tłumienia (min, max), typowo [0, 0.5]
-        omega_0_range: Zakres częstości własnej (min, max) [rad/s] - do metadanych
         noise_std: Odchylenie standardowe szumu pomiarowego
         seed: Ziarno generatora losowego
 
@@ -501,8 +489,7 @@ def generate_dimensionless_dataset(
         Słownik zawierający:
             - 'trajectories': Macierz trajektorii (num_traj, num_steps, 2) - [x, dx/dτ]
             - 'tau': Wektor czasu bezwymiarowego (num_steps,)
-            - 'params': Macierz parametrów (num_traj, 2) - [zeta, omega_0]
-            - 'params_list': Lista słowników z pełnymi parametrami
+            - 'params': Wektor parametrów (num_traj,) - [zeta] (metadane)
     """
     if seed is not None:
         np.random.seed(seed)
@@ -513,16 +500,14 @@ def generate_dimensionless_dataset(
 
     # Inicjalizacja macierzy
     trajectories = np.zeros((num_trajectories, num_steps, 2))
-    params_array = np.zeros((num_trajectories, 2))
-    params_list = []
+    zeta_array = np.zeros(num_trajectories)
 
     for i in range(num_trajectories):
-        # Losowanie parametrów
+        # Losowanie parametru tłumienia
         zeta = np.random.uniform(*zeta_range)
-        omega_0 = np.random.uniform(*omega_0_range)
 
         # Tworzenie oscylatora i generowanie trajektorii
-        oscillator = DimensionlessOscillator(zeta=zeta, omega_0=omega_0)
+        oscillator = DimensionlessOscillator(zeta=zeta)
         state = oscillator.generate_state_space(tau)
 
         # Dodanie szumu
@@ -530,23 +515,12 @@ def generate_dimensionless_dataset(
             state = add_noise(state, noise_std)
 
         trajectories[i] = state
-        params_array[i] = [zeta, omega_0]
-
-        # Słownik parametrów dla kompatybilności
-        params_list.append({
-            'zeta': zeta,
-            'omega_0': omega_0,
-            'x0': 1.0,  # Stałe warunki początkowe
-            'v0': 0.0,
-            'type': 'dimensionless',
-            'is_underdamped': zeta < 1.0
-        })
+        zeta_array[i] = zeta
 
     return {
         'trajectories': trajectories,
         'tau': tau,
-        'params': params_array,
-        'params_list': params_list
+        'params': zeta_array,
     }
 
 
