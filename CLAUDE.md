@@ -71,6 +71,39 @@ Loss function must be based on likelihood, not MSE only.
 
 ---
 
+## Dimensionless Parameterization Support
+
+The project supports two data modes, detected automatically:
+
+### Dimensional mode (default)
+- Time vector key: `time` (units: seconds)
+- State vector: `[x(t), v(t)]` with SI units ([m], [m/s])
+- Plot labels: `Czas [s]`, `Położenie x [m]`, `Prędkość v [m/s]`
+- Predict mode generates both damped and undamped oscillators
+
+### Dimensionless mode (`--dimensionless`)
+- Time vector key: `tau` (dimensionless: τ = ω₀·t)
+- State vector: `[x(τ), dx/dτ]` (dimensionless)
+- Plot labels: `Czas bezwymiarowy τ`, `Położenie x`, `Prędkość dx/dτ`
+- Predict mode generates `DimensionlessOscillator` with random ζ from `--zeta-range`
+- Fixed initial conditions: x(0) = 1, dx/dτ(0) = 0
+
+### Automatic mode detection
+- `visualize_results()` detects mode via `'tau' in dataset` — no flag needed
+- All 7 plot functions in `visualization.py` accept optional label parameters with backward-compatible defaults
+- `predict()` branches on `args.dimensionless` flag
+
+### Key functions by mode:
+| Function | Dimensional | Dimensionless |
+|----------|-------------|---------------|
+| Data generation | `generate_dataset()` | `generate_dimensionless_dataset()` |
+| Data loading | `load_dataset()` | `load_dimensionless_dataset()` |
+| Prediction | `run_prediction_for_oscillator()` | `run_prediction_for_dimensionless()` |
+| Visualization | Auto-detected labels | Auto-detected labels |
+| Model | Same `Seq2SeqModel` | Same `Seq2SeqModel` |
+
+---
+
 ## Implementation Constraints
 - Language: **Python**
 - Framework: **PyTorch**
@@ -106,6 +139,11 @@ All Python commands should be executed within the activated virtual environment.
 
 ---
 
+## Documentation Language
+⚠️ **README.md and all user-facing documentation MUST be written in scientific/academic Polish style**, suitable for an MSc thesis. Avoid colloquial language. Use precise technical terminology.
+
+---
+
 ## Expected Output from AI
 - Clean, modular PyTorch code.
 - Separate modules for:
@@ -115,3 +153,4 @@ All Python commands should be executed within the activated virtual environment.
   - training loop
   - evaluation and visualization
 - Code should be suitable for inclusion in an engineering or MSc thesis.
+- Documentation (README, comments) should use scientific register appropriate for academic work.

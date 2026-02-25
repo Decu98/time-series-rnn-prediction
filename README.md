@@ -1,23 +1,25 @@
-# Predykcja Szeregow Czasowych - Model Seq2Seq LSTM
+# Predykcja szeregow czasowych ukladow dynamicznych z wykorzystaniem modelu Seq2Seq LSTM
 
-Model rekurencyjnej sieci neuronowej (RNN) do predykcji przyszlych rozkladow ruchu ukladu dynamicznego na podstawie fragmentu zarejestrowanego ruchu.
+Implementacja rekurencyjnej sieci neuronowej typu Encoder-Decoder (Seq2Seq) opartej na architekturze LSTM, przeznaczonej do probabilistycznej predykcji przyszlych trajektorii ukladow dynamicznych na podstawie fragmentu zarejestrowanego ruchu. Model nie wymaga jawnej znajomosci parametrow fizycznych ukladu — dynamike wnioskuje bezposrednio z danych wejsciowych.
 
 ## Opis
 
-Projekt implementuje architekture **Encoder-Decoder (Seq2Seq)** oparta na **LSTM** z probabilistycznym wyjsciem Gaussowskim. Model uczy sie dynamiki czasowej bezposrednio z danych i generuje prognozy probabilistyczne (srednia i odchylenie standardowe) na zadany horyzont czasowy.
+Projekt realizuje zagadnienie predykcji szeregow czasowych w kontekscie jednowymiarowych ukladow oscylacyjnych. Zaimplementowana architektura Encoder-Decoder z warstwami LSTM generuje prognozy probabilistyczne w postaci parametrow rozkladu Gaussa (wartosc oczekiwana mu(t) oraz odchylenie standardowe sigma(t)) na zadany horyzont czasowy T_out.
 
 ### Glowne cechy:
-- Architektura Seq2Seq z LSTM
-- Wyjscie probabilistyczne (rozklad Gaussa)
-- Teacher forcing ze scheduled sampling
-- Gradient clipping dla stabilnosci
-- Integracja z PyTorch Lightning
-- **Dwa tryby parametryzacji:**
-  - Wymiarowa (m, c, k) - klasyczna parametryzacja fizyczna
-  - **Bezwymiarowa (zeta)** - uniwersalna parametryzacja
-- **Obsluga dwoch typow oscylatorow:** tlumiony i bez tlumienia
-- **Predykcja rekurencyjna** dla dlugoterminowych prognoz
-- Automatyczne testowanie na obu typach oscylatorow
+- Architektura Seq2Seq z wielowarstwowym LSTM
+- Probabilistyczne wyjscie w postaci parametrow rozkladu normalnego N(mu, sigma^2)
+- Funkcja straty oparta na ujemnym logarytmie wiarygodnosci (Gaussian NLL)
+- Mechanizm teacher forcing ze scheduled sampling (zanikajacy wykladniczo)
+- Obcinanie gradientow (gradient clipping) dla stabilnosci numerycznej
+- Pelna integracja z frameworkiem PyTorch Lightning
+- **Dwa tryby parametryzacji danych treningowych:**
+  - Wymiarowa (m, c, k) — klasyczna parametryzacja fizyczna z jednostkami SI
+  - **Bezwymiarowa (zeta)** — uniwersalna parametryzacja eliminujaca redundancje parametrow
+- **Obsluga trzech typow oscylatorow:** tlumiony, nietlumiony oraz bezwymiarowy
+- **Predykcja rekurencyjna** — iteracyjne generowanie prognoz dlugoterminowych
+- **Automatyczna detekcja trybu** — wizualizacja i ewaluacja dostosowuja etykiety osi na podstawie struktury danych (klucz `tau` vs `time`)
+- Automatyczne testowanie modelu na roznych konfiguracjach oscylatorow
 
 ## Wymagania
 
@@ -147,17 +149,17 @@ gdzie omega_d = sqrt(1 - zeta^2) jest znormalizowana czestoscia tlumiona.
 
 #### Kluczowe cechy
 
-- **Stale warunki poczatkowe:** x(0) = 1, dx/dtau(0) = 0
-- **Dynamika zalezy TYLKO od zeta** (wspolczynnik tlumienia)
-- Siec dostaje wylacznie [x, dx/dtau] — bez dodatkowych parametrow
-- Model sam wnioskuje dynamike z sekwencji wejsciowej
+- **Stale warunki poczatkowe:** x(0) = 1, dx/dtau(0) = 0 — eliminacja zmiennosci zwiazanej z amplituda i faza poczatkowa
+- **Jednoznaczna zaleznosc:** Przy ustalonych warunkach poczatkowych dynamika ukladu jest calkowicie zdeterminowana przez jeden parametr zeta
+- **Wektor stanu wejsciowego:** Siec neuronowa otrzymuje wylacznie [x(tau), dx/dtau] — bez jawnego podawania parametru zeta
+- Model wnioskuje wartosc wspolczynnika tlumienia z ksztaltu sekwencji wejsciowej (szybkosc zanikania obwiedni, czestotliwosc oscylacji)
 
-#### Zalety parametryzacji bezwymiarowej
+#### Zalety parametryzacji bezwymiarowej w kontekscie uczenia maszynowego
 
-- Jeden parametr sterujacy dynamika (zeta)
-- Eliminacja zmiennosci zwiazanej z warunkami poczatkowymi
-- Siec LSTM uczy sie rozpoznawac tlumienie z ksztaltu trajektorii
-- Uniwersalnosc: ta sama dynamika dla roznych ukladow fizycznych o tym samym zeta
+- **Redukcja przestrzeni parametrow:** Zamiast trzech parametrow fizycznych (m, c, k) dynamika opisana jest jednym parametrem bezwymiarowym zeta
+- **Eliminacja degeneracji:** Rozne kombinacje (m, c, k) dajace to samo zeta produkuja identyczna dynamike bezwymiarowa — siec nie musi uczyc sie rozrozniac fizycznie rownowaznych ukladow
+- **Normalizacja skali:** Stale warunki poczatkowe eliminuja koniecznosc adaptacji do roznych amplitud i faz
+- **Uniwersalnosc:** Model wytrenowany na danych bezwymiarowych moze byc stosowany do dowolnego ukladu oscylacyjnego o znanym omega0 (poprzez transformacje tau = omega0*t)
 
 ## Uzycie
 
@@ -250,34 +252,66 @@ python main.py --mode test --dimensionless \
     --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
 ```
 
-Generuje:
-- Metryki: RMSE, MAE, NLL, CRPS, Coverage (1sigma, 2sigma, 3sigma)
-- Wykresy predykcji z przedzialami ufnosci
-- Portret fazowy
-- Ewolucja niepewnosci
+Ewaluacja obejmuje:
+- Obliczenie metryk na calym zbiorze testowym: RMSE, MAE, NLL, CRPS, Coverage (1sigma, 2sigma, 3sigma)
+- Generacja wizualizacji predykcji z przedzialami ufnosci
+- Portret fazowy (przestrzen stanow x vs v)
+- Wykres ewolucji niepewnosci sigma(t) w horyzoncie predykcji
 
-### 4. Predykcja (tryb testowy)
+> **Automatyczna detekcja trybu:** Funkcja wizualizacji automatycznie rozpoznaje tryb bezwymiarowy
+> na podstawie obecnosci klucza `tau` w zbiorze danych. Etykiety osi na wykresach
+> dostosowywane sa odpowiednio — bez koniecznosci recznej konfiguracji.
 
-Testuje model na nowych trajektoriach:
+### 4. Predykcja na nowych trajektoriach (tryb predict)
+
+Tryb predykcji generuje nowa trajektorie oscylatora (niezalezna od zbioru treningowego), a nastepnie wykonuje serie predykcji modelu w rownomiernie rozmieszczonych punktach trajektorii. Umozliwia to ocene jakosci generalizacji modelu na nieznanych danych.
+
+#### Predykcja w trybie wymiarowym
+
+W trybie wymiarowym program automatycznie testuje model na dwoch konfiguracjach: oscylatorze tlumionym (c > 0) oraz oscylatorze nietlumionym (c = 0), z losowo dobranymi parametrami fizycznymi (m, c, k, x0, v0).
 
 ```bash
-# Tryb wymiarowy (testuje oba typy oscylatorow)
 python main.py --mode predict --device cpu \
     --checkpoint outputs/run_*/checkpoints/best.ckpt \
     --T-in 100 --T-out 100 --dt 0.1 --t-max 50 \
     --num-predictions 3 --recursive-steps 5
 ```
 
+Wyniki zapisywane sa w podkatalogach `damped/` i `undamped/`.
+
+#### Predykcja w trybie bezwymiarowym
+
+W trybie bezwymiarowym program generuje trajektorie oscylatora bezwymiarowego z losowo dobranym wspolczynnikiem tlumienia zeta z zakresu okreslonego parametrem `--zeta-range`. Warunki poczatkowe sa stale: x(0) = 1, dx/dtau(0) = 0. Wektor czasu bezwymiarowego tau konstruowany jest na podstawie parametrow `--tau-max` i `--dtau`.
+
+```bash
+python main.py --mode predict --dimensionless --device cpu \
+    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt \
+    --T-in 50 --T-out 30 \
+    --tau-max 50.0 --dtau 0.1 \
+    --zeta-range 0.0 0.5 \
+    --num-predictions 3 --recursive-steps 5
+```
+
+Wszystkie generowane wykresy wykorzystuja etykiety bezwymiarowe (os czasu: tau, polozenie: x, predkosc: dx/dtau).
+
+#### Predykcja rekurencyjna
+
+Parametr `--recursive-steps N` (N > 0) uruchamia tryb predykcji rekurencyjnej. Model generuje prognozę na T_out krokow, a nastepnie uzywa wlasnych predykcji jako danych wejsciowych do kolejnego kroku. Proces powtarzany jest N razy, co pozwala na generowanie prognoz na horyzont N * T_out krokow czasowych. Metoda ta umozliwia ocene stabilnosci numerycznej modelu oraz propagacji niepewnosci w dlugoterminowych prognozach.
+
 **Parametry predykcji:**
 
 | Parametr | Domyslnie | Opis |
 |----------|-----------|------|
-| `--num-predictions` | 3 | Liczba predykcji na trajektorii |
-| `--recursive-steps` | 0 | Liczba krokow rekurencyjnych (0 = wylaczone) |
-| `--T-in` | 50 | Dlugosc okna wejsciowego |
-| `--T-out` | 50 | Horyzont predykcji |
-| `--t-max` | 10.0 | Dlugosc trajektorii testowej [s] |
-| `--dt` | 0.01 | Krok czasowy [s] |
+| `--dimensionless` | False | Predykcja z parametryzacja bezwymiarowa |
+| `--num-predictions` | 3 | Liczba predykcji w rownomiernie rozmieszczonych punktach trajektorii |
+| `--recursive-steps` | 0 | Liczba krokow predykcji rekurencyjnej (0 = wylaczone) |
+| `--T-in` | 50 | Dlugosc okna wejsciowego (liczba krokow czasowych) |
+| `--T-out` | 50 | Horyzont predykcji (liczba krokow czasowych) |
+| `--t-max` | 10.0 | Dlugosc trajektorii testowej [s] (tryb wymiarowy) |
+| `--dt` | 0.01 | Krok czasowy [s] (tryb wymiarowy) |
+| `--tau-max` | 50.0 | Maksymalny czas bezwymiarowy tau (tryb bezwymiarowy) |
+| `--dtau` | 0.1 | Krok czasowy bezwymiarowy (tryb bezwymiarowy) |
+| `--zeta-range` | [0.0, 0.5] | Zakres losowania wspolczynnika tlumienia zeta (tryb bezwymiarowy) |
 
 ## Przykladowe workflow
 
@@ -327,18 +361,27 @@ python main.py --mode train --dimensionless \
     --max-epochs 100 \
     --hidden-size 64
 
-# 4. Ewaluacja
+# 4. Ewaluacja na zbiorze testowym
 python main.py --mode test --dimensionless \
     --data-path data/dimensionless/dataset.npz \
     --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
+
+# 5. Predykcja na nowej trajektorii (z losowym zeta)
+python main.py --mode predict --dimensionless --device cpu \
+    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt \
+    --T-in 50 --T-out 30 \
+    --tau-max 50.0 --dtau 0.1 \
+    --num-predictions 3 --recursive-steps 5
 ```
 
 ## Wyniki
 
-Po treningu wyniki zapisywane sa w katalogu `outputs/run_YYYYMMDD_HHMMSS/`:
+### Struktura katalogu po treningu
+
+Po zakonczeniu treningu wyniki zapisywane sa w katalogu `outputs/run_YYYYMMDD_HHMMSS/` (z sufiksem `_dimensionless` dla trybu bezwymiarowego):
 
 ```
-outputs/run_20240131_123456/
+outputs/run_20240131_123456_dimensionless/
 ├── checkpoints/
 │   ├── best_model-epoch=XX-val_loss=X.XXXX.ckpt
 │   └── last.ckpt
@@ -346,57 +389,115 @@ outputs/run_20240131_123456/
 │   └── version_0/
 │       └── metrics.csv
 ├── plots/
-│   ├── prediction_position.png
-│   ├── prediction_velocity.png
-│   ├── full_trajectory_position.png
-│   ├── full_trajectory_velocity.png
-│   ├── phase_space.png
-│   └── training_curves.png
-├── preprocessor_stats.npz
-└── metrics.txt
+│   ├── prediction_position_zoom.png       # Predykcja polozenia z przedzialami ufnosci
+│   ├── prediction_velocity_zoom.png       # Predykcja predkosci z przedzialami ufnosci
+│   ├── full_trajectory_position.png       # Pelna trajektoria z zaznaczona predykcja
+│   ├── full_trajectory_velocity.png       # j.w. dla predkosci
+│   ├── prediction_comparison.png          # Porownanie obu cech (x, v)
+│   ├── uncertainty_evolution.png          # Ewolucja niepewnosci sigma(t)
+│   ├── phase_space.png                    # Portret fazowy (x vs v)
+│   └── training_curves.png               # Krzywe uczenia (loss treningowy i walidacyjny)
+├── preprocessor_stats.npz                 # Statystyki normalizacji (srednia, odch. std.)
+└── metrics.txt                            # Metryki ewaluacji na zbiorze testowym
 ```
+
+### Struktura katalogu po predykcji (tryb wymiarowy)
+
+```
+outputs/predictions/pred_YYYYMMDD_HHMMSS/
+├── damped/                                # Oscylator tlumiony
+│   ├── multi_prediction_position.png
+│   ├── multi_prediction_velocity.png
+│   ├── zooms/                             # Powiekszenia poszczegolnych predykcji
+│   │   ├── zoom_1_position.png
+│   │   └── zoom_1_velocity.png
+│   ├── recursive/                         # Predykcja rekurencyjna (jesli --recursive-steps > 0)
+│   │   ├── recursive_position.png
+│   │   └── recursive_velocity.png
+│   └── parameters.txt
+├── undamped/                              # Oscylator nietlumiony (analogiczna struktura)
+└── parameters.txt                         # Parametry glowne (seed, T_in, T_out, parametry oscylatora)
+```
+
+### Struktura katalogu po predykcji (tryb bezwymiarowy)
+
+```
+outputs/predictions/pred_YYYYMMDD_HHMMSS/
+├── multi_prediction_position.png          # Predykcje polozenia w wielu punktach tau
+├── multi_prediction_velocity.png          # Predykcje predkosci bezwymiarowej dx/dtau
+├── zooms/                                 # Powiekszenia poszczegolnych predykcji
+│   ├── zoom_1_position.png
+│   ├── zoom_1_velocity.png
+│   └── ...
+├── recursive/                             # Predykcja rekurencyjna (jesli --recursive-steps > 0)
+│   ├── recursive_position.png
+│   └── recursive_velocity.png
+└── parameters.txt                         # Parametry (zeta, T_in, T_out, dtau, tau_max)
+```
+
+> **Uwaga:** W trybie bezwymiarowym wszystkie wykresy wykorzystuja etykiety bezwymiarowe:
+> os czasu — "Czas bezwymiarowy tau", polozenie — "Polozenie x", predkosc — "Predkosc dx/dtau".
+> W trybie wymiarowym stosowane sa etykiety z jednostkami SI: "Czas [s]", "Polozenie x [m]", "Predkosc v [m/s]".
 
 ## Metryki ewaluacji
 
-| Metryka | Opis |
-|---------|------|
-| **RMSE** | Root Mean Square Error |
-| **MAE** | Mean Absolute Error |
-| **NLL** | Negative Log-Likelihood |
-| **CRPS** | Continuous Ranked Probability Score |
-| **Coverage 1sigma** | % probek w przedziale +-1sigma (oczekiwane: 68.27%) |
-| **Coverage 2sigma** | % probek w przedziale +-2sigma (oczekiwane: 95.45%) |
+Do oceny jakosci predykcji wykorzystywane sa nastepujace metryki, obejmujace zarowno dokladnosc punktowa jak i jakosc estymacji niepewnosci:
+
+| Metryka | Opis | Interpretacja |
+|---------|------|---------------|
+| **RMSE** | Pierwiastek bledu sredniokwadratowego | Miara dokladnosci punktowej predykcji [jednostki wielkosci fizycznej] |
+| **MAE** | Sredni blad bezwzgledny | Bardziej odporna na wartosci odstajace miara bledu punktowego |
+| **NLL** | Ujemny logarytm wiarygodnosci (Gaussian) | Miara jakosci estymacji pelnego rozkladu p(y\|x) — im nizsza, tym lepsza kalibracja |
+| **CRPS** | Continuous Ranked Probability Score | Metryka probabilistyczna porownujaca predykowany CDF z obserwacja — uogolnienie MAE na rozklady |
+| **Coverage 1sigma** | Pokrycie przedzialu ufnosci +-1sigma | Oczekiwana wartosc: 68.27% (1 odchylenie standardowe rozkladu normalnego) |
+| **Coverage 2sigma** | Pokrycie przedzialu ufnosci +-2sigma | Oczekiwana wartosc: 95.45% (2 odchylenia standardowe) |
+
+Metryki RMSE i MAE obliczane sa osobno dla kazdej cechy (polozenie x, predkosc v) oraz jako srednia globalna.
 
 ## Typy oscylatorow
+
+Projekt implementuje trzy klasy oscylatorow, odpowiadajace roznym postaciom rownania ruchu jednowymiarowego ukladu liniowego.
 
 ### Oscylator tlumiony (DampedOscillator)
 Rownanie ruchu: `m*x'' + c*x' + k*x = 0`
 
-- Oscylacje gasnace w czasie
-- Portret fazowy: spirala do srodka
-- Parametry: masa (m), tlumienie (c), sztywnosc (k)
+- Rozwiazanie: oscylacje gasnace eksponencjalnie (dla zeta < 1)
+- Portret fazowy: spirala zbiezna do punktu rownowagi (0, 0)
+- Parametry fizyczne: masa m [kg], wspolczynnik tlumienia c [Ns/m], sztywnosc k [N/m]
+- Warunki poczatkowe: dowolne (x0, v0) — losowane z zadanych zakresow
 
-### Oscylator prosty (SimpleHarmonicOscillator)
-Rownanie ruchu: `m*x'' + k*x = 0` (c = 0)
+### Oscylator nietlumiony (SimpleHarmonicOscillator)
+Rownanie ruchu: `m*x'' + k*x = 0` (przypadek szczegolny dla c = 0)
 
-- Oscylacje stale (niegasnace)
-- Portret fazowy: zamknieta elipsa
-- Parametry: masa (m), sztywnosc (k)
+- Rozwiazanie: oscylacje harmoniczne o stalej amplitudzie
+- Portret fazowy: zamknieta elipsa (ruch okresowy, zachowawczy)
+- Parametry fizyczne: masa m [kg], sztywnosc k [N/m]
+- Energia calkowita ukladu jest zachowana: E = 0.5*k*x^2 + 0.5*m*v^2 = const
 
 ### Oscylator bezwymiarowy (DimensionlessOscillator)
 Rownanie ruchu: `d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0`
 
-- Czas bezwymiarowy: tau = omega0*t
-- Stale warunki poczatkowe: x(0)=1, dx/dtau(0)=0
-- Dynamika zalezy tylko od zeta
-- Siec dostaje wylacznie [x, dx/dtau] — bez parametrow warunkujacych
+- Czas bezwymiarowy: tau = omega0*t, gdzie omega0 = sqrt(k/m)
+- Stale warunki poczatkowe: x(0) = 1, dx/dtau(0) = 0
+- Jedyny parametr sterujacy dynamika: wspolczynnik tlumienia bezwymiarowy zeta ∈ [0, 1)
+- Siec neuronowa otrzymuje wylacznie wektor stanu [x, dx/dtau] — bez jawnych parametrow fizycznych
+- Umozliwia porownywanie ukladow o roznych parametrach fizycznych, lecz tej samej dynamice bezwymiarowej
 
 ## Architektura modelu
 
-### Seq2SeqModel (oba tryby)
-- Encoder LSTM: przetwarza sekwencje wejsciowa [x, v]
-- Decoder Gaussowski: generuje predykcje probabilistyczne (mu, sigma)
-- Ten sam model dla trybu wymiarowego i bezwymiarowego — roznia sie tylko danymi
+### Seq2SeqModel (architektura wspolna dla obu trybow)
+
+Model realizuje architekture Encoder-Decoder (Seq2Seq) z warstwami LSTM:
+
+- **Encoder LSTM:** Przetwarza sekwencje wejsciowa [x(t), v(t)] o dlugosci T_in i koduje ja
+  w wektorze stanu ukrytego h ∈ R^(hidden_size). Zastosowano wielowarstwowy LSTM (domyslnie 2 warstwy)
+  z regularyzacja dropout miedzy warstwami.
+- **Decoder Gaussowski:** Na podstawie stanu ukrytego enkodera generuje autoregresywnie
+  sekwencje parametrow rozkladu normalnego (mu_t, sigma_t) dla kazdego kroku t ∈ {1, ..., T_out}.
+  Wartosc sigma_t jest wymuszana jako dodatnia poprzez funkcje aktywacji softplus.
+- **Wspolna architektura:** Identyczna struktura sieci jest wykorzystywana zarowno dla danych
+  wymiarowych [x(t), v(t)] jak i bezwymiarowych [x(tau), dx/dtau]. Roznica polega wylacznie
+  na charakterystyce danych treningowych — model sam wnioskuje dynamike z ksztaltu sekwencji wejsciowej.
 
 ## Urzadzenia obliczeniowe
 
