@@ -178,12 +178,7 @@ python main.py --mode generate --num-trajectories 1000 --undamped-ratio 0.5
 #### Dane bezwymiarowe (zalecane)
 
 ```bash
-python main.py --mode generate --dimensionless \
-    --num-trajectories 1000 \
-    --data-path data/dimensionless/dataset.npz \
-    --zeta-range 0.0 0.5 \
-    --tau-max 50.0 \
-    --dtau 0.1
+python main.py --mode generate --dimensionless --num-trajectories 1000 --data-path data/dimensionless/dataset.npz --zeta-range 0.0 0.5 --tau-max 50.0 --dtau 0.1
 ```
 
 **Parametry generacji danych:**
@@ -205,22 +200,13 @@ python main.py --mode generate --dimensionless \
 #### Trening z danymi wymiarowymi
 
 ```bash
-python main.py --mode train \
-    --max-epochs 100 \
-    --T-in 50 --T-out 50 \
-    --hidden-size 64 \
-    --batch-size 64
+python main.py --mode train --max-epochs 100 --T-in 50 --T-out 50 --hidden-size 64 --batch-size 64
 ```
 
 #### Trening z danymi bezwymiarowymi (zalecany)
 
 ```bash
-python main.py --mode train --dimensionless \
-    --data-path data/dimensionless/dataset.npz \
-    --max-epochs 100 \
-    --T-in 50 --T-out 30 \
-    --hidden-size 64 \
-    --batch-size 64
+python main.py --mode train --dimensionless --data-path data/dimensionless/dataset.npz --max-epochs 100 --T-in 50 --T-out 30 --hidden-size 64 --batch-size 64
 ```
 
 **Glowne parametry treningu:**
@@ -247,9 +233,7 @@ python main.py --mode train --dimensionless \
 python main.py --mode test --checkpoint outputs/run_*/checkpoints/best*.ckpt
 
 # Tryb bezwymiarowy
-python main.py --mode test --dimensionless \
-    --data-path data/dimensionless/dataset.npz \
-    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
+python main.py --mode test --dimensionless --data-path data/dimensionless/dataset.npz --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
 ```
 
 Ewaluacja obejmuje:
@@ -271,10 +255,7 @@ Tryb predykcji generuje nowa trajektorie oscylatora (niezalezna od zbioru trenin
 W trybie wymiarowym program automatycznie testuje model na dwoch konfiguracjach: oscylatorze tlumionym (c > 0) oraz oscylatorze nietlumionym (c = 0), z losowo dobranymi parametrami fizycznymi (m, c, k, x0, v0).
 
 ```bash
-python main.py --mode predict --device cpu \
-    --checkpoint outputs/run_*/checkpoints/best.ckpt \
-    --T-in 100 --T-out 100 --dt 0.1 --t-max 50 \
-    --num-predictions 3 --recursive-steps 5
+python main.py --mode predict --device cpu --checkpoint outputs/run_*/checkpoints/best.ckpt --T-in 100 --T-out 100 --dt 0.1 --t-max 50 --num-predictions 3 --recursive-steps 5
 ```
 
 Wyniki zapisywane sa w podkatalogach `damped/` i `undamped/`.
@@ -284,12 +265,7 @@ Wyniki zapisywane sa w podkatalogach `damped/` i `undamped/`.
 W trybie bezwymiarowym program generuje trajektorie oscylatora bezwymiarowego z losowo dobranym wspolczynnikiem tlumienia zeta z zakresu okreslonego parametrem `--zeta-range`. Warunki poczatkowe sa stale: x(0) = 1, dx/dtau(0) = 0. Wektor czasu bezwymiarowego tau konstruowany jest na podstawie parametrow `--tau-max` i `--dtau`.
 
 ```bash
-python main.py --mode predict --dimensionless --device cpu \
-    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt \
-    --T-in 50 --T-out 30 \
-    --tau-max 50.0 --dtau 0.1 \
-    --zeta-range 0.0 0.5 \
-    --num-predictions 3 --recursive-steps 5
+python main.py --mode predict --dimensionless --device cpu --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt --T-in 50 --T-out 30 --tau-max 50.0 --dtau 0.1 --zeta-range 0.0 0.5 --num-predictions 3 --recursive-steps 5
 ```
 
 Wszystkie generowane wykresy wykorzystuja etykiety bezwymiarowe (os czasu: tau, polozenie: x, predkosc: dx/dtau).
@@ -323,21 +299,13 @@ source .venv/bin/activate  # Linux/macOS
 .venv\Scripts\activate     # Windows
 
 # 2. Generacja mieszanego datasetu
-python main.py --mode generate \
-    --num-trajectories 1000 \
-    --undamped-ratio 0.5 \
-    --t-max 20 --dt 0.01
+python main.py --mode generate --num-trajectories 1000 --undamped-ratio 0.5 --t-max 20 --dt 0.01
 
 # 3. Trening modelu
-python main.py --mode train \
-    --T-in 100 --T-out 100 \
-    --max-epochs 100
+python main.py --mode train --T-in 100 --T-out 100 --max-epochs 100
 
 # 4. Predykcja
-python main.py --mode predict --device cpu \
-    --checkpoint outputs/run_*/checkpoints/best.ckpt \
-    --T-in 100 --T-out 100 --dt 0.1 --t-max 50 \
-    --num-predictions 3 --recursive-steps 3
+python main.py --mode predict --device cpu --checkpoint outputs/run_*/checkpoints/best.ckpt --T-in 100 --T-out 100 --dt 0.1 --t-max 50 --num-predictions 3 --recursive-steps 3
 ```
 
 ### Workflow 2: Parametryzacja bezwymiarowa (zalecana)
@@ -348,30 +316,16 @@ source .venv/bin/activate  # Linux/macOS
 .venv\Scripts\activate     # Windows
 
 # 2. Generacja danych bezwymiarowych
-python main.py --mode generate --dimensionless \
-    --num-trajectories 1000 \
-    --data-path data/dimensionless/dataset.npz \
-    --zeta-range 0.0 0.5 \
-    --tau-max 50.0 --dtau 0.1
+python main.py --mode generate --dimensionless --num-trajectories 1000 --data-path data/dimensionless/dataset.npz --zeta-range 0.0 0.5 --tau-max 50.0 --dtau 0.1
 
 # 3. Trening modelu
-python main.py --mode train --dimensionless \
-    --data-path data/dimensionless/dataset.npz \
-    --T-in 50 --T-out 30 \
-    --max-epochs 100 \
-    --hidden-size 64
+python main.py --mode train --dimensionless --data-path data/dimensionless/dataset.npz --T-in 50 --T-out 30 --max-epochs 100 --hidden-size 64
 
 # 4. Ewaluacja na zbiorze testowym
-python main.py --mode test --dimensionless \
-    --data-path data/dimensionless/dataset.npz \
-    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
+python main.py --mode test --dimensionless --data-path data/dimensionless/dataset.npz --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt
 
 # 5. Predykcja na nowej trajektorii (z losowym zeta)
-python main.py --mode predict --dimensionless --device cpu \
-    --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt \
-    --T-in 50 --T-out 30 \
-    --tau-max 50.0 --dtau 0.1 \
-    --num-predictions 3 --recursive-steps 5
+python main.py --mode predict --dimensionless --device cpu --checkpoint outputs/run_*_dimensionless/checkpoints/best*.ckpt --T-in 50 --T-out 30 --tau-max 50.0 --dtau 0.1 --num-predictions 3 --recursive-steps 5
 ```
 
 ## Wyniki
