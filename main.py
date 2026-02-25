@@ -448,42 +448,41 @@ def plot_dimensionless_trajectory(
     axes[1, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
     axes[1, 0].axvline(x=0, color='k', linestyle='-', linewidth=0.5)
 
-    # 4. Informacje
+    # 4. Informacje o parametrach
     axes[1, 1].axis('off')
 
-    # Zakres parametrow z datasetu
+    # Statystyki z datasetu
     zeta_min, zeta_max = zetas.min(), zetas.max()
-    omega0_min, omega0_max = params[:, 1].min(), params[:, 1].max()
+    zeta_mean = zetas.mean()
+    tau_max = tau[-1]
+    dtau = tau[1] - tau[0] if len(tau) > 1 else 0
+    num_traj = len(trajectories)
 
     info_text = f"""
-    PARAMETRYZACJA BEZWYMIAROWA
+    OSCYLATOR BEZWYMIAROWY
     ====================================
 
     Rownanie ruchu:
     d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0
 
-    gdzie tau = omega0*t jest czasem bezwymiarowym.
-
-    Warunki poczatkowe (STALE):
+    Parametry bezwymiarowe:
     -------------------------------------
-    Polozenie: x(0) = 1
-    Predkosc:  dx/dtau(0) = 0
+    zeta (min):            {zeta_min:.4f}
+    zeta (max):            {zeta_max:.4f}
+    zeta (srednia):        {zeta_mean:.4f}
 
-    Kluczowa wlasnosc:
+    Warunki poczatkowe:
     -------------------------------------
-    Dla stalych warunkow poczatkowych
-    dynamika zalezy TYLKO od zeta!
+    Polozenie x(0):        1.0
+    Predkosc dx/dtau(0):   0.0
 
-    Zakres parametrow:
+    Parametry symulacji:
     -------------------------------------
-    zeta: [{zeta_min:.3f}, {zeta_max:.3f}]
-    omega0: [{omega0_min:.1f}, {omega0_max:.1f}] rad/s
+    Czas tau_max:          {tau_max:.1f}
+    Krok dtau:             {dtau:.3f}
+    Liczba trajektorii:    {num_traj}
 
-    Korzysci:
-    -------------------------------------
-    * Model uczy sie uniwersalnych zaleznosci
-    * Lepsza generalizacja
-    * Jeden parametr sterujacy dynamika
+    Typ ruchu: Oscylacje tlumione (zeta < 1)
     """
 
     axes[1, 1].text(0.05, 0.95, info_text, transform=axes[1, 1].transAxes,
