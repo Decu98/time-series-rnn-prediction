@@ -98,17 +98,67 @@ Rownanie w czasie bezwymiarowym tau = omega0*t:
 d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0
 ```
 
-**Kluczowe cechy:**
+#### Wyprowadzenie rownania bezwymiarowego
+
+**Krok 1: Rownanie wyjsciowe (wymiarowe)**
+```
+m*x'' + c*x' + k*x = 0
+```
+
+**Krok 2: Dzielimy przez m**
+```
+x'' + (c/m)*x' + (k/m)*x = 0
+```
+
+**Krok 3: Definiujemy parametry bezwymiarowe**
+- omega0 = sqrt(k/m) — czestosc wlasna nietlumiona [rad/s]
+- zeta = c / (2*sqrt(k*m)) = c / (2*m*omega0) — wspolczynnik tlumienia bezwymiarowy
+
+Stad: c/m = 2*zeta*omega0
+
+**Krok 4: Rownanie przyjmuje postac**
+```
+x'' + 2*zeta*omega0*x' + omega0^2*x = 0
+```
+
+**Krok 5: Wprowadzamy czas bezwymiarowy tau = omega0*t**
+
+Pochodne transformuja sie:
+- dx/dt = omega0 * (dx/dtau)
+- d2x/dt2 = omega0^2 * (d2x/dtau2)
+
+**Krok 6: Podstawiamy do rownania**
+```
+omega0^2*(d2x/dtau2) + 2*zeta*omega0*omega0*(dx/dtau) + omega0^2*x = 0
+```
+
+**Krok 7: Dzielimy przez omega0^2**
+```
+d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0
+```
+
+#### Rozwiazanie analityczne
+
+Dla zeta < 1 (tlumienie podkrytyczne) rozwiazanie przy warunkach x(0)=1, dx/dtau(0)=0:
+```
+x(tau) = e^(-zeta*tau) * [cos(omega_d*tau) + (zeta/omega_d)*sin(omega_d*tau)]
+```
+gdzie omega_d = sqrt(1 - zeta^2) jest znormalizowana czestoscia tlumiona.
+
+#### Kluczowe cechy
+
 - **Stale warunki poczatkowe:** x(0) = 1, dx/dtau(0) = 0
 - **Dynamika zalezy TYLKO od zeta** (wspolczynnik tlumienia)
 - Model uczy sie uniwersalnych zaleznosci
 - Lepsza generalizacja na rozne uklady fizyczne
 - Parametry: zeta (tlumienie), omega0 (czestotliwosc wlasna)
 
-**Zalety:**
+#### Zalety parametryzacji bezwymiarowej
+
 - Jeden parametr sterujacy dynamika (zeta)
 - Eliminacja zmiennosci zwiazanej z warunkami poczatkowymi
 - Model kondycjonowany parametrami [zeta, omega0]
+- Uniwersalnosc: ta sama dynamika dla roznych ukladow fizycznych o tym samym zeta
 
 ## Uzycie
 
