@@ -434,7 +434,8 @@ def plot_forced_dimensionless_trajectory(
     """
     Generuje wykres trajektorii oscylatora wymuszonego bezwymiarowego.
 
-    Wybiera ~6 trajektorii z różnych reżimów i rysuje wykres 2×2:
+    Wybiera dokładnie 9 trajektorii — po jednej z każdego reżimu
+    (A1, A2, A3, B1, B2, B3, C1, C2, C3) — i rysuje wykres 2×2:
     położenie, prędkość, portret fazowy, panel info.
 
     Args:
@@ -448,76 +449,81 @@ def plot_forced_dimensionless_trajectory(
     trajectories = dataset['trajectories']
     num_traj = len(trajectories)
 
-    # Wybór ~6 trajektorii z różnych reżimów
     zetas = params[:, 0]
     omegas = params[:, 1]
 
-    # Przypisanie reżimu każdej trajektorii
-    regime_labels = []
+    # Przypisanie reżimu każdej trajektorii i grupowanie indeksów
+    regime_indices: Dict[str, list] = {}
     for i in range(num_traj):
         z, o = zetas[i], omegas[i]
         zk = 'A' if z < 0.05 else ('B' if z < 0.25 else 'C')
         ok = '1' if o < 0.7 else ('2' if o < 1.3 else '3')
-        regime_labels.append(f'{zk}{ok}')
+        key = f'{zk}{ok}'
+        regime_indices.setdefault(key, []).append(i)
 
-    # Wybór jednej trajektorii z każdego reżimu (do 9)
+    # Deterministyczny wybór: po jednej trajektorii z każdego reżimu
+    # Sortujemy klucze tak, by kolejność była A1,A2,A3,B1,...,C3
+    all_regime_keys = sorted(regime_indices.keys())
     selected_indices = []
-    seen_regimes = set()
-    for i, rl in enumerate(regime_labels):
-        if rl not in seen_regimes:
-            selected_indices.append(i)
-            seen_regimes.add(rl)
-        if len(selected_indices) >= 6:
-            break
+    selected_labels = []
+    for key in all_regime_keys:
+        idx = regime_indices[key][0]
+        selected_indices.append(idx)
+        selected_labels.append(key)
+
+    num_selected = len(selected_indices)
 
     # Tworzenie wykresu 2x2
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle('Oscylator wymuszony bezwymiarowy', fontsize=14, fontweight='bold')
 
-    colors = plt.cm.tab10(np.linspace(0, 0.6, len(selected_indices)))
+    colors = plt.cm.tab10(np.linspace(0, 0.9, num_selected))
 
     # 1. Położenie w czasie
     for ci, idx in enumerate(selected_indices):
         z, o = params[idx]
+        lbl = selected_labels[ci]
         x = trajectories[idx, :, 0]
         axes[0, 0].plot(tau, x, color=colors[ci], linewidth=1.0,
-                        label=f'ζ={z:.3f}, Ω={o:.2f}')
+                        label=f'{lbl}: ζ={z:.3f}, Ω={o:.2f}')
 
     axes[0, 0].set_xlabel('Czas bezwymiarowy τ')
     axes[0, 0].set_ylabel('Położenie x')
     axes[0, 0].set_title('Położenie vs czas bezwymiarowy')
     axes[0, 0].grid(True, alpha=0.3)
-    axes[0, 0].legend(loc='upper right', fontsize=7)
+    axes[0, 0].legend(loc='upper right', fontsize=6)
     axes[0, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
 
     # 2. Prędkość bezwymiarowa
     for ci, idx in enumerate(selected_indices):
         z, o = params[idx]
+        lbl = selected_labels[ci]
         v = trajectories[idx, :, 1]
         axes[0, 1].plot(tau, v, color=colors[ci], linewidth=1.0,
-                        label=f'ζ={z:.3f}, Ω={o:.2f}')
+                        label=f'{lbl}: ζ={z:.3f}, Ω={o:.2f}')
 
     axes[0, 1].set_xlabel('Czas bezwymiarowy τ')
     axes[0, 1].set_ylabel('Prędkość dx/dτ')
     axes[0, 1].set_title('Prędkość bezwymiarowa vs czas')
     axes[0, 1].grid(True, alpha=0.3)
-    axes[0, 1].legend(loc='upper right', fontsize=7)
+    axes[0, 1].legend(loc='upper right', fontsize=6)
     axes[0, 1].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
 
     # 3. Portret fazowy
     for ci, idx in enumerate(selected_indices):
         z, o = params[idx]
+        lbl = selected_labels[ci]
         x = trajectories[idx, :, 0]
         v = trajectories[idx, :, 1]
         axes[1, 0].plot(x, v, color=colors[ci], linewidth=0.8,
-                        label=f'ζ={z:.3f}, Ω={o:.2f}')
+                        label=f'{lbl}: ζ={z:.3f}, Ω={o:.2f}')
 
     axes[1, 0].plot(1.0, 0.0, 'ko', markersize=8, label='Start (1, 0)')
     axes[1, 0].set_xlabel('Położenie x')
     axes[1, 0].set_ylabel('Prędkość dx/dτ')
     axes[1, 0].set_title('Portret fazowy (przestrzeń stanów)')
     axes[1, 0].grid(True, alpha=0.3)
-    axes[1, 0].legend(loc='upper right', fontsize=7)
+    axes[1, 0].legend(loc='upper right', fontsize=6)
     axes[1, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
     axes[1, 0].axvline(x=0, color='k', linestyle='-', linewidth=0.5)
 
