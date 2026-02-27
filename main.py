@@ -437,15 +437,18 @@ def plot_forced_dimensionless_trajectory(
     output_dir: Path
 ) -> None:
     """
-    Generuje wykres trajektorii oscylatora wymuszonego bezwymiarowego.
+    Generuje 4 wykresy trajektorii oscylatora bezwymiarowego.
 
-    Wybiera dokładnie 9 trajektorii — po jednej z każdego reżimu
-    (A1, A2, A3, B1, B2, B3, C1, C2, C3) — i rysuje wykres 2×2:
-    położenie, prędkość, portret fazowy, panel info.
+    Każdy wykres (2×2: położenie, prędkość, portret fazowy, info)
+    odpowiada jednej grupie Ω i zawiera 3 trajektorie (A, B, C):
+      - group0: swobodne (A0, B0, C0) — drgania gasnące
+      - group1: Ω < rezonans (A1, B1, C1)
+      - group2: Ω ≈ rezonans (A2, B2, C2)
+      - group3: Ω > rezonans (A3, B3, C3)
 
     Args:
         dataset: Słownik z danymi (trajectories, tau, params)
-        output_dir: Katalog na zapis wykresu
+        output_dir: Katalog na zapis wykresów
     """
     import matplotlib.pyplot as plt
 
@@ -456,9 +459,10 @@ def plot_forced_dimensionless_trajectory(
 
     zetas = params[:, 0]
     omegas = params[:, 1]
+    tau_max_val = tau[-1]
+    dtau_val = tau[1] - tau[0] if len(tau) > 1 else 0
 
-    # Przypisanie reżimu każdej trajektorii i grupowanie indeksów
-    # omega=0 → reżim swobodny (grupa '0')
+    # Przypisanie reżimu każdej trajektorii
     regime_indices: Dict[str, list] = {}
     for i in range(num_traj):
         z, o = zetas[i], omegas[i]
@@ -470,107 +474,139 @@ def plot_forced_dimensionless_trajectory(
         key = f'{zk}{ok}'
         regime_indices.setdefault(key, []).append(i)
 
-    # Deterministyczny wybór: po jednej trajektorii z każdego reżimu
-    # Sortujemy klucze tak, by kolejność była A1,A2,A3,B1,...,C3
-    all_regime_keys = sorted(regime_indices.keys())
-    selected_indices = []
-    selected_labels = []
-    for key in all_regime_keys:
-        idx = regime_indices[key][0]
-        selected_indices.append(idx)
-        selected_labels.append(key)
+    # Definicje 4 grup Ω
+    omega_groups = {
+        '0': {
+            'title': 'Drgania swobodne (F₀ = 0)',
+            'desc': 'Omega = 0 (brak wymuszenia)',
+            'filename': 'forced_group0_free.png',
+            'box_color': 'lightgreen',
+        },
+        '1': {
+            'title': 'Wymuszenie poniżej rezonansu (Ω ∈ [0.3, 0.7])',
+            'desc': 'Omega < 1 (ponizej rezonansu)',
+            'filename': 'forced_group1_below.png',
+            'box_color': 'lightyellow',
+        },
+        '2': {
+            'title': 'Wymuszenie w okolicy rezonansu (Ω ∈ [0.7, 1.3])',
+            'desc': 'Omega ~ 1 (okolice rezonansu)',
+            'filename': 'forced_group2_resonance.png',
+            'box_color': 'mistyrose',
+        },
+        '3': {
+            'title': 'Wymuszenie powyżej rezonansu (Ω ∈ [1.3, 2.5])',
+            'desc': 'Omega > 1 (powyzej rezonansu)',
+            'filename': 'forced_group3_above.png',
+            'box_color': 'lavender',
+        },
+    }
 
-    num_selected = len(selected_indices)
+    zeta_keys = ['A', 'B', 'C']
+    colors_3 = ['#1f77b4', '#ff7f0e', '#2ca02c']  # niebieski, pomarańczowy, zielony
 
-    # Tworzenie wykresu 2x2
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('Oscylator wymuszony bezwymiarowy', fontsize=14, fontweight='bold')
+    for og_key, og_info in omega_groups.items():
+        # Reżimy w tej grupie: A{og_key}, B{og_key}, C{og_key}
+        group_regimes = [f'{zk}{og_key}' for zk in zeta_keys]
+        selected = []
+        for rk in group_regimes:
+            if rk in regime_indices and regime_indices[rk]:
+                selected.append((rk, regime_indices[rk][0]))
 
-    colors = plt.cm.tab10(np.linspace(0, 0.9, num_selected))
+        if not selected:
+            continue
 
-    # Funkcja pomocnicza do formatowania etykiety legendy
-    def _legend_label(ci: int, idx: int) -> str:
-        z, o = params[idx]
-        lbl = selected_labels[ci]
-        if o == 0.0:
-            return f'{lbl}: ζ={z:.3f}, swobodny'
-        return f'{lbl}: ζ={z:.3f}, Ω={o:.2f}'
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig.suptitle(og_info['title'], fontsize=14, fontweight='bold')
 
-    # Styl linii: kreskowana dla swobodnych, ciągła dla wymuszonych
-    def _linestyle(ci: int, idx: int) -> str:
-        return '--' if params[idx, 1] == 0.0 else '-'
+        is_free = (og_key == '0')
+        linestyle = '--' if is_free else '-'
 
-    # 1. Położenie w czasie
-    for ci, idx in enumerate(selected_indices):
-        x = trajectories[idx, :, 0]
-        axes[0, 0].plot(tau, x, color=colors[ci], linewidth=1.0,
-                        linestyle=_linestyle(ci, idx),
-                        label=_legend_label(ci, idx))
+        # 1. Położenie
+        for ci, (rk, idx) in enumerate(selected):
+            z, o = params[idx]
+            lbl = f'{rk}: ζ={z:.3f}' if is_free else f'{rk}: ζ={z:.3f}, Ω={o:.2f}'
+            x = trajectories[idx, :, 0]
+            axes[0, 0].plot(tau, x, color=colors_3[ci], linewidth=1.2,
+                            linestyle=linestyle, label=lbl)
 
-    axes[0, 0].set_xlabel('Czas bezwymiarowy τ')
-    axes[0, 0].set_ylabel('Położenie x')
-    axes[0, 0].set_title('Położenie vs czas bezwymiarowy')
-    axes[0, 0].grid(True, alpha=0.3)
-    axes[0, 0].legend(loc='upper right', fontsize=6)
-    axes[0, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+        axes[0, 0].set_xlabel('Czas bezwymiarowy τ')
+        axes[0, 0].set_ylabel('Położenie x')
+        axes[0, 0].set_title('Położenie vs czas bezwymiarowy')
+        axes[0, 0].grid(True, alpha=0.3)
+        axes[0, 0].legend(loc='upper right', fontsize=9)
+        axes[0, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
 
-    # 2. Prędkość bezwymiarowa
-    for ci, idx in enumerate(selected_indices):
-        v = trajectories[idx, :, 1]
-        axes[0, 1].plot(tau, v, color=colors[ci], linewidth=1.0,
-                        linestyle=_linestyle(ci, idx),
-                        label=_legend_label(ci, idx))
+        # 2. Prędkość
+        for ci, (rk, idx) in enumerate(selected):
+            z, o = params[idx]
+            lbl = f'{rk}: ζ={z:.3f}' if is_free else f'{rk}: ζ={z:.3f}, Ω={o:.2f}'
+            v = trajectories[idx, :, 1]
+            axes[0, 1].plot(tau, v, color=colors_3[ci], linewidth=1.2,
+                            linestyle=linestyle, label=lbl)
 
-    axes[0, 1].set_xlabel('Czas bezwymiarowy τ')
-    axes[0, 1].set_ylabel('Prędkość dx/dτ')
-    axes[0, 1].set_title('Prędkość bezwymiarowa vs czas')
-    axes[0, 1].grid(True, alpha=0.3)
-    axes[0, 1].legend(loc='upper right', fontsize=6)
-    axes[0, 1].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+        axes[0, 1].set_xlabel('Czas bezwymiarowy τ')
+        axes[0, 1].set_ylabel('Prędkość dx/dτ')
+        axes[0, 1].set_title('Prędkość bezwymiarowa vs czas')
+        axes[0, 1].grid(True, alpha=0.3)
+        axes[0, 1].legend(loc='upper right', fontsize=9)
+        axes[0, 1].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
 
-    # 3. Portret fazowy
-    for ci, idx in enumerate(selected_indices):
-        x = trajectories[idx, :, 0]
-        v = trajectories[idx, :, 1]
-        axes[1, 0].plot(x, v, color=colors[ci], linewidth=0.8,
-                        linestyle=_linestyle(ci, idx),
-                        label=_legend_label(ci, idx))
+        # 3. Portret fazowy
+        for ci, (rk, idx) in enumerate(selected):
+            z, o = params[idx]
+            lbl = f'{rk}: ζ={z:.3f}' if is_free else f'{rk}: ζ={z:.3f}, Ω={o:.2f}'
+            x = trajectories[idx, :, 0]
+            v = trajectories[idx, :, 1]
+            axes[1, 0].plot(x, v, color=colors_3[ci], linewidth=1.0,
+                            linestyle=linestyle, label=lbl)
 
-    axes[1, 0].plot(1.0, 0.0, 'ko', markersize=8, label='Start (1, 0)')
-    axes[1, 0].set_xlabel('Położenie x')
-    axes[1, 0].set_ylabel('Prędkość dx/dτ')
-    axes[1, 0].set_title('Portret fazowy (przestrzeń stanów)')
-    axes[1, 0].grid(True, alpha=0.3)
-    axes[1, 0].legend(loc='upper right', fontsize=6)
-    axes[1, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
-    axes[1, 0].axvline(x=0, color='k', linestyle='-', linewidth=0.5)
+        axes[1, 0].plot(1.0, 0.0, 'ko', markersize=8, label='Start (1, 0)')
+        axes[1, 0].set_xlabel('Położenie x')
+        axes[1, 0].set_ylabel('Prędkość dx/dτ')
+        axes[1, 0].set_title('Portret fazowy (przestrzeń stanów)')
+        axes[1, 0].grid(True, alpha=0.3)
+        axes[1, 0].legend(loc='upper right', fontsize=9)
+        axes[1, 0].axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+        axes[1, 0].axvline(x=0, color='k', linestyle='-', linewidth=0.5)
 
-    # 4. Panel informacyjny
-    axes[1, 1].axis('off')
+        # 4. Panel informacyjny
+        axes[1, 1].axis('off')
 
-    zeta_min, zeta_max = zetas.min(), zetas.max()
-    forced_mask = omegas > 0
-    num_forced = int(forced_mask.sum())
-    num_free = num_traj - num_forced
-    omega_forced_min = omegas[forced_mask].min() if num_forced > 0 else 0.0
-    omega_forced_max = omegas[forced_mask].max() if num_forced > 0 else 0.0
-    tau_max_val = tau[-1]
-    dtau_val = tau[1] - tau[0] if len(tau) > 1 else 0
+        # Statystyki grupy
+        group_indices_all = []
+        for rk, _ in selected:
+            group_indices_all.extend(regime_indices[rk])
+        g_zetas = zetas[group_indices_all]
+        g_omegas = omegas[group_indices_all]
+        n_group = len(group_indices_all)
 
-    info_text = f"""
-    OSCYLATOR BEZWYMIAROWY (wymuszony + swobodny)
+        if is_free:
+            eq_line = "d2x/dtau2 + 2*zeta*(dx/dtau) + x = 0"
+            omega_line = "Omega:                 brak (F0 = 0)"
+            motion_type = "Drgania gasnace (swobodne)"
+        else:
+            eq_line = "d2x/dtau2 + 2*zeta*(dx/dtau) + x = F0*cos(Omega*tau)"
+            omega_line = f"Omega (min):           {g_omegas.min():.4f}\n    Omega (max):           {g_omegas.max():.4f}\n    F0:                    {FORCED_F0}"
+            if og_key == '2':
+                motion_type = "Okolice rezonansu (Omega ~ 1)"
+            elif og_key == '1':
+                motion_type = "Ponizej rezonansu (Omega < 1)"
+            else:
+                motion_type = "Powyzej rezonansu (Omega > 1)"
+
+        info_text = f"""
+    GRUPA {og_key}: {og_info['desc']}
     ====================================
 
     Rownanie ruchu:
-    d2x/dtau2 + 2*zeta*(dx/dtau) + x = F0*cos(Omega*tau)
-    (F0=0 dla rezimow swobodnych)
+    {eq_line}
 
     Parametry bezwymiarowe:
     -------------------------------------
-    zeta (min):            {zeta_min:.4f}
-    zeta (max):            {zeta_max:.4f}
-    Omega wymuszonych:     [{omega_forced_min:.4f}, {omega_forced_max:.4f}]
-    F0 (wymuszone):        {FORCED_F0}
+    zeta (min):            {g_zetas.min():.4f}
+    zeta (max):            {g_zetas.max():.4f}
+    {omega_line}
 
     Warunki poczatkowe:
     -------------------------------------
@@ -581,23 +617,22 @@ def plot_forced_dimensionless_trajectory(
     -------------------------------------
     Czas tau_max:          {tau_max_val:.1f}
     Krok dtau:             {dtau_val:.3f}
-    Liczba trajektorii:    {num_traj}
-      - wymuszonych:       {num_forced}
-      - swobodnych:        {num_free}
-    Rezimow:               12 (9 wymuszonych + 3 swobodne)
+    Trajektorii w grupie:  {n_group}
+    Typ ruchu:             {motion_type}
     """
 
-    axes[1, 1].text(0.05, 0.95, info_text, transform=axes[1, 1].transAxes,
-                    fontsize=9, verticalalignment='top', fontfamily='monospace',
-                    bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.5))
+        axes[1, 1].text(0.05, 0.95, info_text, transform=axes[1, 1].transAxes,
+                        fontsize=9, verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor=og_info['box_color'],
+                                  alpha=0.5))
 
-    plt.tight_layout()
+        plt.tight_layout()
 
-    plot_path = output_dir / 'forced_dimensionless_trajectories.png'
-    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    plt.close(fig)
+        plot_path = output_dir / og_info['filename']
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
 
-    print(f"  Wykres zapisany: {plot_path}")
+        print(f"  Wykres zapisany: {plot_path}")
 
 
 def plot_dimensionless_trajectory(
