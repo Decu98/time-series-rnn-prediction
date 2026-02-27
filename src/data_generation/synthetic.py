@@ -47,6 +47,35 @@ class DimensionlessParams:
 
 
 @dataclass
+class ForcedDimensionlessParams:
+    """
+    Parametry bezwymiarowe oscylatora wymuszonego.
+
+    Równanie bezwymiarowe: d²x/dτ² + 2ζ(dx/dτ) + x = F₀·cos(Ωτ)
+    gdzie τ = ω₀·t jest czasem bezwymiarowym,
+    Ω = ω/ω₀ jest bezwymiarową częstością wymuszenia.
+
+    Attributes:
+        zeta: Współczynnik tłumienia bezwymiarowy ζ ≥ 0
+        omega: Bezwymiarowa częstość wymuszenia Ω > 0
+        f0: Bezwymiarowa amplituda wymuszenia F₀
+    """
+    zeta: float
+    omega: float
+    f0: float = 1.0
+
+    @property
+    def is_underdamped(self) -> bool:
+        """Czy układ jest podkrytycznie tłumiony."""
+        return self.zeta < 1.0
+
+    @property
+    def is_near_resonance(self) -> bool:
+        """Czy częstość wymuszenia jest blisko rezonansu (Ω ≈ 1)."""
+        return 0.7 <= self.omega <= 1.3
+
+
+@dataclass
 class OscillatorParams:
     """
     Parametry fizyczne oscylatora tłumionego.
@@ -311,6 +340,128 @@ class DimensionlessOscillator:
         return np.column_stack([x, v_tau])
 
 
+# Stałe definiujące reżimy oscylatora wymuszonego bezwymiarowego
+FORCED_ZETA_GROUPS = {
+    'A': (0.00, 0.05),  # brak/minimalne tłumienie
+    'B': (0.05, 0.25),  # lekkie tłumienie
+    'C': (0.25, 0.85),  # spore tłumienie
+}
+FORCED_OMEGA_GROUPS = {
+    '1': (0.3, 0.7),    # poniżej rezonansu
+    '2': (0.7, 1.3),    # okolice rezonansu
+    '3': (1.3, 2.5),    # powyżej rezonansu
+}
+FORCED_F0 = 1.0
+
+
+class ForcedDimensionlessOscillator:
+    """
+    Oscylator wymuszony w parametryzacji bezwymiarowej.
+
+    Równanie ruchu w czasie bezwymiarowym τ = ω₀·t:
+        d²x/dτ² + 2ζ(dx/dτ) + x = F₀·cos(Ωτ)
+
+    gdzie Ω = ω/ω₀ jest bezwymiarową częstością wymuszenia.
+
+    Stałe warunki początkowe: x(0)=1, dx/dτ(0)=0
+
+    Attributes:
+        params: Parametry bezwymiarowe oscylatora (ζ, Ω, F₀)
+    """
+
+    def __init__(
+        self,
+        zeta: float = 0.1,
+        omega: float = 1.0,
+        f0: float = 1.0
+    ):
+        """
+        Inicjalizacja oscylatora wymuszonego bezwymiarowego.
+
+        Args:
+            zeta: Współczynnik tłumienia bezwymiarowy ζ ≥ 0
+            omega: Bezwymiarowa częstość wymuszenia Ω > 0
+            f0: Bezwymiarowa amplituda wymuszenia F₀
+        """
+        if zeta < 0:
+            raise ValueError("Współczynnik tłumienia ζ musi być nieujemny")
+        if omega <= 0:
+            raise ValueError("Częstość wymuszenia Ω musi być dodatnia")
+
+        self.params = ForcedDimensionlessParams(zeta=zeta, omega=omega, f0=f0)
+
+    def _equations_of_motion(
+        self,
+        state: np.ndarray,
+        tau: float
+    ) -> List[float]:
+        """
+        Równania ruchu oscylatora wymuszonego w postaci bezwymiarowej.
+
+        Przekształcenie:
+            dx/dτ = v_τ
+            dv_τ/dτ = -2ζ·v_τ - x + F₀·cos(Ωτ)
+
+        Args:
+            state: Wektor stanu [x, v_τ] gdzie v_τ = dx/dτ
+            tau: Czas bezwymiarowy
+
+        Returns:
+            Lista pochodnych [dx/dτ, dv_τ/dτ]
+        """
+        x, v_tau = state
+        dxdtau = v_tau
+        dvdtau = (
+            -2 * self.params.zeta * v_tau
+            - x
+            + self.params.f0 * np.cos(self.params.omega * tau)
+        )
+        return [dxdtau, dvdtau]
+
+    def generate_trajectory(
+        self,
+        tau: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Generuje trajektorię w czasie bezwymiarowym.
+
+        Warunki początkowe są stałe: x(0)=1, dx/dτ(0)=0
+
+        Args:
+            tau: Wektor czasu bezwymiarowego τ = ω₀·t
+
+        Returns:
+            Tuple zawierający:
+                - x: Wektor położeń (bezwymiarowych)
+                - v_tau: Wektor prędkości bezwymiarowych (dx/dτ)
+        """
+        # Stałe warunki początkowe
+        initial_state = [1.0, 0.0]  # x₀=1, v₀=0
+
+        solution = odeint(self._equations_of_motion, initial_state, tau)
+
+        x = solution[:, 0]
+        v_tau = solution[:, 1]
+
+        return x, v_tau
+
+    def generate_state_space(
+        self,
+        tau: np.ndarray
+    ) -> np.ndarray:
+        """
+        Generuje trajektorię w przestrzeni stanów [x, dx/dτ].
+
+        Args:
+            tau: Wektor czasu bezwymiarowego
+
+        Returns:
+            Macierz stanów o wymiarach (len(tau), 2)
+        """
+        x, v_tau = self.generate_trajectory(tau)
+        return np.column_stack([x, v_tau])
+
+
 def add_noise(
     data: np.ndarray,
     noise_std: float = 0.01,
@@ -521,6 +672,86 @@ def generate_dimensionless_dataset(
         'trajectories': trajectories,
         'tau': tau,
         'params': zeta_array,
+    }
+
+
+def generate_forced_dimensionless_dataset(
+    num_trajectories: int = 900,
+    dtau: float = 0.1,
+    tau_max: float = 80.0,
+    zeta_range: Tuple[float, float] = (0.0, 0.85),
+    noise_std: float = 0.01,
+    seed: Optional[int] = None
+) -> Dict[str, np.ndarray]:
+    """
+    Generuje zbiór danych oscylatora wymuszonego w parametryzacji bezwymiarowej.
+
+    Równanie: d²x/dτ² + 2ζ(dx/dτ) + x = F₀·cos(Ωτ)
+    Dane generowane w 9 reżimach (3 grupy ζ × 3 grupy Ω)
+    z ciągłym losowaniem parametrów wewnątrz każdego reżimu.
+
+    Args:
+        num_trajectories: Liczba trajektorii (zaokrąglana do wielokrotności 9)
+        dtau: Krok czasowy bezwymiarowy
+        tau_max: Maksymalny czas bezwymiarowy
+        zeta_range: Zakres ζ (informacyjny — faktyczne zakresy wynikają z grup)
+        noise_std: Odchylenie standardowe szumu pomiarowego
+        seed: Ziarno generatora losowego
+
+    Returns:
+        Słownik zawierający:
+            - 'trajectories': Macierz trajektorii (N, steps, 2) - [x, dx/dτ]
+            - 'tau': Wektor czasu bezwymiarowego (steps,)
+            - 'params': Macierz parametrów (N, 2) - [zeta, omega]
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    # Zaokrąglenie do wielokrotności 9
+    num_trajectories = (num_trajectories // 9) * 9
+    per_regime = num_trajectories // 9
+
+    # Wektor czasu bezwymiarowego
+    tau = np.arange(0, tau_max, dtau)
+    num_steps = len(tau)
+
+    # Inicjalizacja macierzy
+    trajectories = np.zeros((num_trajectories, num_steps, 2))
+    params_array = np.zeros((num_trajectories, 2))  # [zeta, omega]
+
+    idx = 0
+    zeta_keys = sorted(FORCED_ZETA_GROUPS.keys())
+    omega_keys = sorted(FORCED_OMEGA_GROUPS.keys())
+
+    for zk in zeta_keys:
+        zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
+        for ok in omega_keys:
+            omega_lo, omega_hi = FORCED_OMEGA_GROUPS[ok]
+            for _ in range(per_regime):
+                zeta = np.random.uniform(zeta_lo, zeta_hi)
+                omega = np.random.uniform(omega_lo, omega_hi)
+
+                oscillator = ForcedDimensionlessOscillator(
+                    zeta=zeta, omega=omega, f0=FORCED_F0
+                )
+                state = oscillator.generate_state_space(tau)
+
+                if noise_std > 0:
+                    state = add_noise(state, noise_std)
+
+                trajectories[idx] = state
+                params_array[idx] = [zeta, omega]
+                idx += 1
+
+    # Losowe przemieszanie trajektorii
+    perm = np.random.permutation(num_trajectories)
+    trajectories = trajectories[perm]
+    params_array = params_array[perm]
+
+    return {
+        'trajectories': trajectories,
+        'tau': tau,
+        'params': params_array,
     }
 
 
