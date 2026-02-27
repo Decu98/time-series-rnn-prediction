@@ -389,15 +389,20 @@ def generate_forced_dimensionless_data(args: argparse.Namespace) -> Dict[str, np
     data_dir.mkdir(parents=True, exist_ok=True)
 
     # Informacja o reżimach
-    print("\n  9 reżimów (ζ × Ω):")
+    print("\n  12 reżimów (9 wymuszonych + 3 swobodne):")
+    print("  Wymuszone (ζ × Ω):")
     for zk in sorted(FORCED_ZETA_GROUPS.keys()):
         zlo, zhi = FORCED_ZETA_GROUPS[zk]
         for ok in sorted(FORCED_OMEGA_GROUPS.keys()):
             olo, ohi = FORCED_OMEGA_GROUPS[ok]
             print(f"    {zk}{ok}: ζ ∈ [{zlo:.2f}, {zhi:.2f}], Ω ∈ [{olo:.1f}, {ohi:.1f}]")
+    print("  Swobodne (F₀ = 0, drgania gasnące):")
+    for zk in sorted(FORCED_ZETA_GROUPS.keys()):
+        zlo, zhi = FORCED_ZETA_GROUPS[zk]
+        print(f"    {zk}0: ζ ∈ [{zlo:.2f}, {zhi:.2f}], Ω = 0 (brak wymuszenia)")
 
-    num_adj = (args.num_trajectories // 9) * 9
-    per_regime = num_adj // 9
+    num_adj = (args.num_trajectories // 12) * 12
+    per_regime = num_adj // 12
 
     print(f"\n  Liczba trajektorii: {num_adj} ({per_regime} na reżim)")
     print(f"  Czas bezwymiarowy tau_max: {args.tau_max}")
@@ -453,11 +458,15 @@ def plot_forced_dimensionless_trajectory(
     omegas = params[:, 1]
 
     # Przypisanie reżimu każdej trajektorii i grupowanie indeksów
+    # omega=0 → reżim swobodny (grupa '0')
     regime_indices: Dict[str, list] = {}
     for i in range(num_traj):
         z, o = zetas[i], omegas[i]
         zk = 'A' if z < 0.05 else ('B' if z < 0.25 else 'C')
-        ok = '1' if o < 0.7 else ('2' if o < 1.3 else '3')
+        if o == 0.0:
+            ok = '0'
+        else:
+            ok = '1' if o < 0.7 else ('2' if o < 1.3 else '3')
         key = f'{zk}{ok}'
         regime_indices.setdefault(key, []).append(i)
 
@@ -479,13 +488,24 @@ def plot_forced_dimensionless_trajectory(
 
     colors = plt.cm.tab10(np.linspace(0, 0.9, num_selected))
 
-    # 1. Położenie w czasie
-    for ci, idx in enumerate(selected_indices):
+    # Funkcja pomocnicza do formatowania etykiety legendy
+    def _legend_label(ci: int, idx: int) -> str:
         z, o = params[idx]
         lbl = selected_labels[ci]
+        if o == 0.0:
+            return f'{lbl}: ζ={z:.3f}, swobodny'
+        return f'{lbl}: ζ={z:.3f}, Ω={o:.2f}'
+
+    # Styl linii: kreskowana dla swobodnych, ciągła dla wymuszonych
+    def _linestyle(ci: int, idx: int) -> str:
+        return '--' if params[idx, 1] == 0.0 else '-'
+
+    # 1. Położenie w czasie
+    for ci, idx in enumerate(selected_indices):
         x = trajectories[idx, :, 0]
         axes[0, 0].plot(tau, x, color=colors[ci], linewidth=1.0,
-                        label=f'{lbl}: ζ={z:.3f}, Ω={o:.2f}')
+                        linestyle=_linestyle(ci, idx),
+                        label=_legend_label(ci, idx))
 
     axes[0, 0].set_xlabel('Czas bezwymiarowy τ')
     axes[0, 0].set_ylabel('Położenie x')
@@ -496,11 +516,10 @@ def plot_forced_dimensionless_trajectory(
 
     # 2. Prędkość bezwymiarowa
     for ci, idx in enumerate(selected_indices):
-        z, o = params[idx]
-        lbl = selected_labels[ci]
         v = trajectories[idx, :, 1]
         axes[0, 1].plot(tau, v, color=colors[ci], linewidth=1.0,
-                        label=f'{lbl}: ζ={z:.3f}, Ω={o:.2f}')
+                        linestyle=_linestyle(ci, idx),
+                        label=_legend_label(ci, idx))
 
     axes[0, 1].set_xlabel('Czas bezwymiarowy τ')
     axes[0, 1].set_ylabel('Prędkość dx/dτ')
@@ -511,12 +530,11 @@ def plot_forced_dimensionless_trajectory(
 
     # 3. Portret fazowy
     for ci, idx in enumerate(selected_indices):
-        z, o = params[idx]
-        lbl = selected_labels[ci]
         x = trajectories[idx, :, 0]
         v = trajectories[idx, :, 1]
         axes[1, 0].plot(x, v, color=colors[ci], linewidth=0.8,
-                        label=f'{lbl}: ζ={z:.3f}, Ω={o:.2f}')
+                        linestyle=_linestyle(ci, idx),
+                        label=_legend_label(ci, idx))
 
     axes[1, 0].plot(1.0, 0.0, 'ko', markersize=8, label='Start (1, 0)')
     axes[1, 0].set_xlabel('Położenie x')
@@ -531,24 +549,28 @@ def plot_forced_dimensionless_trajectory(
     axes[1, 1].axis('off')
 
     zeta_min, zeta_max = zetas.min(), zetas.max()
-    omega_min, omega_max = omegas.min(), omegas.max()
+    forced_mask = omegas > 0
+    num_forced = int(forced_mask.sum())
+    num_free = num_traj - num_forced
+    omega_forced_min = omegas[forced_mask].min() if num_forced > 0 else 0.0
+    omega_forced_max = omegas[forced_mask].max() if num_forced > 0 else 0.0
     tau_max_val = tau[-1]
     dtau_val = tau[1] - tau[0] if len(tau) > 1 else 0
 
     info_text = f"""
-    OSCYLATOR WYMUSZONY BEZWYMIAROWY
+    OSCYLATOR BEZWYMIAROWY (wymuszony + swobodny)
     ====================================
 
     Rownanie ruchu:
     d2x/dtau2 + 2*zeta*(dx/dtau) + x = F0*cos(Omega*tau)
+    (F0=0 dla rezimow swobodnych)
 
     Parametry bezwymiarowe:
     -------------------------------------
     zeta (min):            {zeta_min:.4f}
     zeta (max):            {zeta_max:.4f}
-    Omega (min):           {omega_min:.4f}
-    Omega (max):           {omega_max:.4f}
-    F0:                    {FORCED_F0}
+    Omega wymuszonych:     [{omega_forced_min:.4f}, {omega_forced_max:.4f}]
+    F0 (wymuszone):        {FORCED_F0}
 
     Warunki poczatkowe:
     -------------------------------------
@@ -560,7 +582,9 @@ def plot_forced_dimensionless_trajectory(
     Czas tau_max:          {tau_max_val:.1f}
     Krok dtau:             {dtau_val:.3f}
     Liczba trajektorii:    {num_traj}
-    Rezimow:               9 (3 zeta x 3 Omega)
+      - wymuszonych:       {num_forced}
+      - swobodnych:        {num_free}
+    Rezimow:               12 (9 wymuszonych + 3 swobodne)
     """
 
     axes[1, 1].text(0.05, 0.95, info_text, transform=axes[1, 1].transAxes,

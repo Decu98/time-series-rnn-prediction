@@ -676,7 +676,7 @@ def generate_dimensionless_dataset(
 
 
 def generate_forced_dimensionless_dataset(
-    num_trajectories: int = 900,
+    num_trajectories: int = 960,
     dtau: float = 0.1,
     tau_max: float = 80.0,
     zeta_range: Tuple[float, float] = (0.0, 0.85),
@@ -684,14 +684,19 @@ def generate_forced_dimensionless_dataset(
     seed: Optional[int] = None
 ) -> Dict[str, np.ndarray]:
     """
-    Generuje zbiór danych oscylatora wymuszonego w parametryzacji bezwymiarowej.
+    Generuje zbiór danych oscylatora w parametryzacji bezwymiarowej.
 
-    Równanie: d²x/dτ² + 2ζ(dx/dτ) + x = F₀·cos(Ωτ)
-    Dane generowane w 9 reżimach (3 grupy ζ × 3 grupy Ω)
-    z ciągłym losowaniem parametrów wewnątrz każdego reżimu.
+    Zawiera 12 reżimów:
+    - 9 wymuszonych: 3 grupy ζ × 3 grupy Ω  (F₀ > 0)
+    - 3 swobodne:    3 grupy ζ × Ω=0 (F₀ = 0, drgania gasnące)
+
+    Reżimy wymuszenia (Ω > 0):
+        d²x/dτ² + 2ζ(dx/dτ) + x = F₀·cos(Ωτ)
+    Reżimy swobodne (Ω = 0):
+        d²x/dτ² + 2ζ(dx/dτ) + x = 0
 
     Args:
-        num_trajectories: Liczba trajektorii (zaokrąglana do wielokrotności 9)
+        num_trajectories: Liczba trajektorii (zaokrąglana do wielokrotności 12)
         dtau: Krok czasowy bezwymiarowy
         tau_max: Maksymalny czas bezwymiarowy
         zeta_range: Zakres ζ (informacyjny — faktyczne zakresy wynikają z grup)
@@ -702,14 +707,15 @@ def generate_forced_dimensionless_dataset(
         Słownik zawierający:
             - 'trajectories': Macierz trajektorii (N, steps, 2) - [x, dx/dτ]
             - 'tau': Wektor czasu bezwymiarowego (steps,)
-            - 'params': Macierz parametrów (N, 2) - [zeta, omega]
+            - 'params': Macierz parametrów (N, 2) - [zeta, omega] (omega=0 → swobodny)
     """
     if seed is not None:
         np.random.seed(seed)
 
-    # Zaokrąglenie do wielokrotności 9
-    num_trajectories = (num_trajectories // 9) * 9
-    per_regime = num_trajectories // 9
+    num_regimes = 12  # 9 wymuszonych + 3 swobodnych
+    # Zaokrąglenie do wielokrotności 12
+    num_trajectories = (num_trajectories // num_regimes) * num_regimes
+    per_regime = num_trajectories // num_regimes
 
     # Wektor czasu bezwymiarowego
     tau = np.arange(0, tau_max, dtau)
@@ -723,6 +729,7 @@ def generate_forced_dimensionless_dataset(
     zeta_keys = sorted(FORCED_ZETA_GROUPS.keys())
     omega_keys = sorted(FORCED_OMEGA_GROUPS.keys())
 
+    # 9 reżimów wymuszonych (ζ × Ω, F₀ > 0)
     for zk in zeta_keys:
         zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
         for ok in omega_keys:
@@ -742,6 +749,22 @@ def generate_forced_dimensionless_dataset(
                 trajectories[idx] = state
                 params_array[idx] = [zeta, omega]
                 idx += 1
+
+    # 3 reżimy swobodne (ζ, F₀ = 0 → drgania gasnące)
+    for zk in zeta_keys:
+        zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
+        for _ in range(per_regime):
+            zeta = np.random.uniform(zeta_lo, zeta_hi)
+
+            oscillator = DimensionlessOscillator(zeta=zeta)
+            state = oscillator.generate_state_space(tau)
+
+            if noise_std > 0:
+                state = add_noise(state, noise_std)
+
+            trajectories[idx] = state
+            params_array[idx] = [zeta, 0.0]  # omega=0 sygnalizuje brak wymuszenia
+            idx += 1
 
     # Losowe przemieszanie trajektorii
     perm = np.random.permutation(num_trajectories)
