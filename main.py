@@ -2429,50 +2429,89 @@ def predict(args: argparse.Namespace) -> None:
         zeta = round(zeta, 4)
 
         if args.forced:
-            # Tryb wymuszony — losowanie Ω z pełnego zakresu
-            omega = np.random.uniform(0.3, 2.5)
-            omega = round(omega, 4)
+            # Tryb wymuszony — predykcja dla wszystkich 12 reżimów
             f0 = FORCED_F0
+            zeta_keys = sorted(FORCED_ZETA_GROUPS.keys())
+            omega_keys = sorted(FORCED_OMEGA_GROUPS.keys())
 
-            print(f"\nParametry oscylatora wymuszonego bezwymiarowego:")
-            print(f"  - ζ (zeta): {zeta}")
-            print(f"  - Ω (omega): {omega}")
-            print(f"  - F₀: {f0}")
-            print(f"  - x(0) = 1.0, dx/dτ(0) = 0.0")
+            # Budowanie listy 12 reżimów: 9 wymuszonych + 3 swobodne
+            regimes = []
+            for zk in zeta_keys:
+                for ok in omega_keys:
+                    regimes.append((zk, ok))
+            for zk in zeta_keys:
+                regimes.append((zk, '0'))
 
-            print("\n" + "-" * 40)
-            print(f"OSCYLATOR WYMUSZONY (ζ={zeta}, Ω={omega})")
-            print("-" * 40)
+            print(f"\nPredykcja dla {len(regimes)} reżimów (9 wymuszonych + 3 swobodne)")
+            print(f"  x(0) = 1.0, dx/dτ(0) = 0.0, F₀ = {f0}")
 
-            run_prediction_for_forced_dimensionless(
-                model=model,
-                preprocessor=preprocessor,
-                device=device,
-                output_dir=output_dir,
-                zeta=zeta,
-                omega=omega,
-                f0=f0,
-                tau=tau,
-                T_in=T_in,
-                T_out=T_out,
-                num_predictions=args.num_predictions,
-                recursive_steps=args.recursive_steps
-            )
+            for regime_idx, (zk, ok) in enumerate(regimes):
+                zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
+                regime_zeta = np.random.uniform(zeta_lo, zeta_hi)
+                regime_zeta = round(regime_zeta, 4)
+
+                regime_label = f'{zk}{ok}'
+                regime_dir = output_dir / regime_label
+                regime_dir.mkdir(parents=True, exist_ok=True)
+
+                if ok == '0':
+                    # Reżim swobodny (F₀ = 0)
+                    print(f"\n{'=' * 40}")
+                    print(f"[{regime_idx+1}/{len(regimes)}] {regime_label}: SWOBODNY (ζ={regime_zeta:.4f})")
+                    print(f"{'=' * 40}")
+
+                    run_prediction_for_dimensionless(
+                        model=model,
+                        preprocessor=preprocessor,
+                        device=device,
+                        output_dir=regime_dir,
+                        zeta=regime_zeta,
+                        tau=tau,
+                        T_in=T_in,
+                        T_out=T_out,
+                        num_predictions=args.num_predictions,
+                        recursive_steps=args.recursive_steps
+                    )
+                else:
+                    # Reżim wymuszony
+                    omega_lo, omega_hi = FORCED_OMEGA_GROUPS[ok]
+                    regime_omega = np.random.uniform(omega_lo, omega_hi)
+                    regime_omega = round(regime_omega, 4)
+
+                    print(f"\n{'=' * 40}")
+                    print(f"[{regime_idx+1}/{len(regimes)}] {regime_label}: WYMUSZONY (ζ={regime_zeta:.4f}, Ω={regime_omega:.4f})")
+                    print(f"{'=' * 40}")
+
+                    run_prediction_for_forced_dimensionless(
+                        model=model,
+                        preprocessor=preprocessor,
+                        device=device,
+                        output_dir=regime_dir,
+                        zeta=regime_zeta,
+                        omega=regime_omega,
+                        f0=f0,
+                        tau=tau,
+                        T_in=T_in,
+                        T_out=T_out,
+                        num_predictions=args.num_predictions,
+                        recursive_steps=args.recursive_steps
+                    )
 
             # Zapisanie parametrów głównych
             params_file = output_dir / 'parameters.txt'
             with open(params_file, 'w', encoding='utf-8') as f:
-                f.write(f"Tryb: wymuszony bezwymiarowy (forced dimensionless)\n")
+                f.write(f"Tryb: wymuszony bezwymiarowy - 12 rezimow\n")
                 f.write(f"Seed: {seed}\n")
                 f.write(f"T_in: {T_in}\n")
                 f.write(f"T_out: {T_out}\n")
                 f.write(f"dtau: {dtau}\n")
                 f.write(f"tau_max: {tau_max}\n")
-                f.write(f"zeta: {zeta}\n")
-                f.write(f"omega: {omega}\n")
-                f.write(f"f0: {f0}\n")
+                f.write(f"F0: {f0}\n")
                 f.write(f"num_predictions: {args.num_predictions}\n")
                 f.write(f"recursive_steps: {args.recursive_steps}\n")
+                f.write(f"\nRezimy:\n")
+                for zk, ok in regimes:
+                    f.write(f"  {zk}{ok}\n")
 
         else:
             print(f"\nParametry oscylatora bezwymiarowego:")
