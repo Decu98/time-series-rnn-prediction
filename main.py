@@ -257,6 +257,18 @@ def parse_arguments() -> argparse.Namespace:
         action='store_true',
         help='Oscylator wymuszony bezwymiarowy: d2x/dtau2 + 2*zeta*(dx/dtau) + x = F0*cos(Omega*tau)'
     )
+    parser.add_argument(
+        '--predict-zeta',
+        type=float,
+        default=None,
+        help='Konkretna wartosc zeta do predykcji (pomija losowanie z grup)'
+    )
+    parser.add_argument(
+        '--predict-omega',
+        type=float,
+        default=None,
+        help='Konkretna wartosc Omega do predykcji (pomija losowanie z grup)'
+    )
 
     # Inne
     parser.add_argument(
@@ -389,7 +401,10 @@ def generate_forced_dimensionless_data(args: argparse.Namespace) -> Dict[str, np
     data_dir.mkdir(parents=True, exist_ok=True)
 
     # Informacja o reżimach
-    print("\n  12 reżimów (9 wymuszonych + 3 swobodne):")
+    num_forced = len(FORCED_ZETA_GROUPS) * len(FORCED_OMEGA_GROUPS)
+    num_free = len(FORCED_ZETA_GROUPS)
+    num_regimes_total = num_forced + num_free
+    print(f"\n  {num_regimes_total} reżimów ({num_forced} wymuszonych + {num_free} swobodne):")
     print("  Wymuszone (ζ × Ω):")
     for zk in sorted(FORCED_ZETA_GROUPS.keys()):
         zlo, zhi = FORCED_ZETA_GROUPS[zk]
@@ -401,8 +416,8 @@ def generate_forced_dimensionless_data(args: argparse.Namespace) -> Dict[str, np
         zlo, zhi = FORCED_ZETA_GROUPS[zk]
         print(f"    {zk}0: ζ ∈ [{zlo:.2f}, {zhi:.2f}], Ω = 0 (brak wymuszenia)")
 
-    num_adj = (args.num_trajectories // 12) * 12
-    per_regime = num_adj // 12
+    num_adj = (args.num_trajectories // num_regimes_total) * num_regimes_total
+    per_regime = num_adj // num_regimes_total
 
     print(f"\n  Liczba trajektorii: {num_adj} ({per_regime} na reżim)")
     print(f"  Czas bezwymiarowy tau_max: {args.tau_max}")
@@ -466,11 +481,18 @@ def plot_forced_dimensionless_trajectory(
     regime_indices: Dict[str, list] = {}
     for i in range(num_traj):
         z, o = zetas[i], omegas[i]
-        zk = 'A' if z < 0.05 else ('B' if z < 0.25 else 'C')
+        if z < 0.007:
+            zk = 'Z'
+        elif z < 0.05:
+            zk = 'A'
+        elif z < 0.25:
+            zk = 'B'
+        else:
+            zk = 'C'
         if o == 0.0:
             ok = '0'
         else:
-            ok = '1' if o < 0.7 else ('2' if o < 1.3 else '3')
+            ok = '1' if o < 0.9 else ('2' if o < 1.1 else '3')
         key = f'{zk}{ok}'
         regime_indices.setdefault(key, []).append(i)
 
@@ -483,27 +505,27 @@ def plot_forced_dimensionless_trajectory(
             'box_color': 'lightgreen',
         },
         '1': {
-            'title': 'Wymuszenie poniżej rezonansu (Ω ∈ [0.3, 0.7])',
+            'title': 'Wymuszenie poniżej rezonansu (Ω ∈ [0.3, 0.9])',
             'desc': 'Omega < 1 (ponizej rezonansu)',
             'filename': 'forced_group1_below.png',
             'box_color': 'lightyellow',
         },
         '2': {
-            'title': 'Wymuszenie w okolicy rezonansu (Ω ∈ [0.7, 1.3])',
+            'title': 'Wymuszenie w okolicy rezonansu (Ω ∈ [0.9, 1.1])',
             'desc': 'Omega ~ 1 (okolice rezonansu)',
             'filename': 'forced_group2_resonance.png',
             'box_color': 'mistyrose',
         },
         '3': {
-            'title': 'Wymuszenie powyżej rezonansu (Ω ∈ [1.3, 2.5])',
+            'title': 'Wymuszenie powyżej rezonansu (Ω ∈ [1.1, 2.5])',
             'desc': 'Omega > 1 (powyzej rezonansu)',
             'filename': 'forced_group3_above.png',
             'box_color': 'lavender',
         },
     }
 
-    zeta_keys = ['A', 'B', 'C']
-    colors_3 = ['#1f77b4', '#ff7f0e', '#2ca02c']  # niebieski, pomarańczowy, zielony
+    zeta_keys = ['Z', 'A', 'B', 'C']
+    colors_4 = ['#d62728', '#1f77b4', '#ff7f0e', '#2ca02c']  # czerwony, niebieski, pomarańczowy, zielony
 
     for og_key, og_info in omega_groups.items():
         # Reżimy w tej grupie: A{og_key}, B{og_key}, C{og_key}
@@ -527,7 +549,7 @@ def plot_forced_dimensionless_trajectory(
             z, o = params[idx]
             lbl = f'{rk}: ζ={z:.3f}' if is_free else f'{rk}: ζ={z:.3f}, Ω={o:.2f}'
             x = trajectories[idx, :, 0]
-            axes[0, 0].plot(tau, x, color=colors_3[ci], linewidth=1.2,
+            axes[0, 0].plot(tau, x, color=colors_4[ci], linewidth=1.2,
                             linestyle=linestyle, label=lbl)
 
         axes[0, 0].set_xlabel('Czas bezwymiarowy τ')
@@ -542,7 +564,7 @@ def plot_forced_dimensionless_trajectory(
             z, o = params[idx]
             lbl = f'{rk}: ζ={z:.3f}' if is_free else f'{rk}: ζ={z:.3f}, Ω={o:.2f}'
             v = trajectories[idx, :, 1]
-            axes[0, 1].plot(tau, v, color=colors_3[ci], linewidth=1.2,
+            axes[0, 1].plot(tau, v, color=colors_4[ci], linewidth=1.2,
                             linestyle=linestyle, label=lbl)
 
         axes[0, 1].set_xlabel('Czas bezwymiarowy τ')
@@ -558,7 +580,7 @@ def plot_forced_dimensionless_trajectory(
             lbl = f'{rk}: ζ={z:.3f}' if is_free else f'{rk}: ζ={z:.3f}, Ω={o:.2f}'
             x = trajectories[idx, :, 0]
             v = trajectories[idx, :, 1]
-            axes[1, 0].plot(x, v, color=colors_3[ci], linewidth=1.0,
+            axes[1, 0].plot(x, v, color=colors_4[ci], linewidth=1.0,
                             linestyle=linestyle, label=lbl)
 
         axes[1, 0].plot(1.0, 0.0, 'ko', markersize=8, label='Start (1, 0)')
@@ -2429,89 +2451,136 @@ def predict(args: argparse.Namespace) -> None:
         zeta = round(zeta, 4)
 
         if args.forced:
-            # Tryb wymuszony — predykcja dla wszystkich 12 reżimów
             f0 = FORCED_F0
-            zeta_keys = sorted(FORCED_ZETA_GROUPS.keys())
-            omega_keys = sorted(FORCED_OMEGA_GROUPS.keys())
 
-            # Budowanie listy 12 reżimów: 9 wymuszonych + 3 swobodne
-            regimes = []
-            for zk in zeta_keys:
-                for ok in omega_keys:
-                    regimes.append((zk, ok))
-            for zk in zeta_keys:
-                regimes.append((zk, '0'))
+            if args.predict_zeta is not None and args.predict_omega is not None:
+                # Tryb wymuszony — predykcja dla konkretnych wartości ζ i Ω
+                regime_zeta = args.predict_zeta
+                regime_omega = args.predict_omega
 
-            print(f"\nPredykcja dla {len(regimes)} reżimów (9 wymuszonych + 3 swobodne)")
-            print(f"  x(0) = 1.0, dx/dτ(0) = 0.0, F₀ = {f0}")
-
-            for regime_idx, (zk, ok) in enumerate(regimes):
-                zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
-                regime_zeta = np.random.uniform(zeta_lo, zeta_hi)
-                regime_zeta = round(regime_zeta, 4)
-
-                regime_label = f'{zk}{ok}'
+                regime_label = f'custom_z{regime_zeta}_O{regime_omega}'
                 regime_dir = output_dir / regime_label
                 regime_dir.mkdir(parents=True, exist_ok=True)
 
-                if ok == '0':
-                    # Reżim swobodny (F₀ = 0)
-                    print(f"\n{'=' * 40}")
-                    print(f"[{regime_idx+1}/{len(regimes)}] {regime_label}: SWOBODNY (ζ={regime_zeta:.4f})")
-                    print(f"{'=' * 40}")
+                print(f"\nPredykcja dla zadanych parametrów:")
+                print(f"  ζ = {regime_zeta}, Ω = {regime_omega}, F₀ = {f0}")
+                print(f"  x(0) = 1.0, dx/dτ(0) = 0.0")
 
-                    run_prediction_for_dimensionless(
-                        model=model,
-                        preprocessor=preprocessor,
-                        device=device,
-                        output_dir=regime_dir,
-                        zeta=regime_zeta,
-                        tau=tau,
-                        T_in=T_in,
-                        T_out=T_out,
-                        num_predictions=args.num_predictions,
-                        recursive_steps=args.recursive_steps
-                    )
-                else:
-                    # Reżim wymuszony
-                    omega_lo, omega_hi = FORCED_OMEGA_GROUPS[ok]
-                    regime_omega = np.random.uniform(omega_lo, omega_hi)
-                    regime_omega = round(regime_omega, 4)
+                run_prediction_for_forced_dimensionless(
+                    model=model,
+                    preprocessor=preprocessor,
+                    device=device,
+                    output_dir=regime_dir,
+                    zeta=regime_zeta,
+                    omega=regime_omega,
+                    f0=f0,
+                    tau=tau,
+                    T_in=T_in,
+                    T_out=T_out,
+                    num_predictions=args.num_predictions,
+                    recursive_steps=args.recursive_steps
+                )
 
-                    print(f"\n{'=' * 40}")
-                    print(f"[{regime_idx+1}/{len(regimes)}] {regime_label}: WYMUSZONY (ζ={regime_zeta:.4f}, Ω={regime_omega:.4f})")
-                    print(f"{'=' * 40}")
+                # Zapisanie parametrów
+                params_file = output_dir / 'parameters.txt'
+                with open(params_file, 'w', encoding='utf-8') as f:
+                    f.write(f"Tryb: wymuszony bezwymiarowy - zadane parametry\n")
+                    f.write(f"Seed: {seed}\n")
+                    f.write(f"T_in: {T_in}\n")
+                    f.write(f"T_out: {T_out}\n")
+                    f.write(f"dtau: {dtau}\n")
+                    f.write(f"tau_max: {tau_max}\n")
+                    f.write(f"zeta: {regime_zeta}\n")
+                    f.write(f"omega: {regime_omega}\n")
+                    f.write(f"F0: {f0}\n")
+                    f.write(f"num_predictions: {args.num_predictions}\n")
+                    f.write(f"recursive_steps: {args.recursive_steps}\n")
 
-                    run_prediction_for_forced_dimensionless(
-                        model=model,
-                        preprocessor=preprocessor,
-                        device=device,
-                        output_dir=regime_dir,
-                        zeta=regime_zeta,
-                        omega=regime_omega,
-                        f0=f0,
-                        tau=tau,
-                        T_in=T_in,
-                        T_out=T_out,
-                        num_predictions=args.num_predictions,
-                        recursive_steps=args.recursive_steps
-                    )
+            else:
+                # Tryb wymuszony — predykcja dla wszystkich reżimów
+                zeta_keys = sorted(FORCED_ZETA_GROUPS.keys())
+                omega_keys = sorted(FORCED_OMEGA_GROUPS.keys())
 
-            # Zapisanie parametrów głównych
-            params_file = output_dir / 'parameters.txt'
-            with open(params_file, 'w', encoding='utf-8') as f:
-                f.write(f"Tryb: wymuszony bezwymiarowy - 12 rezimow\n")
-                f.write(f"Seed: {seed}\n")
-                f.write(f"T_in: {T_in}\n")
-                f.write(f"T_out: {T_out}\n")
-                f.write(f"dtau: {dtau}\n")
-                f.write(f"tau_max: {tau_max}\n")
-                f.write(f"F0: {f0}\n")
-                f.write(f"num_predictions: {args.num_predictions}\n")
-                f.write(f"recursive_steps: {args.recursive_steps}\n")
-                f.write(f"\nRezimy:\n")
-                for zk, ok in regimes:
-                    f.write(f"  {zk}{ok}\n")
+                # Budowanie listy reżimów: wymuszonych + swobodne
+                regimes = []
+                for zk in zeta_keys:
+                    for ok in omega_keys:
+                        regimes.append((zk, ok))
+                for zk in zeta_keys:
+                    regimes.append((zk, '0'))
+
+                num_forced_r = len(FORCED_ZETA_GROUPS) * len(FORCED_OMEGA_GROUPS)
+                num_free_r = len(FORCED_ZETA_GROUPS)
+                print(f"\nPredykcja dla {len(regimes)} reżimów ({num_forced_r} wymuszonych + {num_free_r} swobodne)")
+                print(f"  x(0) = 1.0, dx/dτ(0) = 0.0, F₀ = {f0}")
+
+                for regime_idx, (zk, ok) in enumerate(regimes):
+                    zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
+                    regime_zeta = np.random.uniform(zeta_lo, zeta_hi)
+                    regime_zeta = round(regime_zeta, 4)
+
+                    regime_label = f'{zk}{ok}'
+                    regime_dir = output_dir / regime_label
+                    regime_dir.mkdir(parents=True, exist_ok=True)
+
+                    if ok == '0':
+                        # Reżim swobodny (F₀ = 0)
+                        print(f"\n{'=' * 40}")
+                        print(f"[{regime_idx+1}/{len(regimes)}] {regime_label}: SWOBODNY (ζ={regime_zeta:.4f})")
+                        print(f"{'=' * 40}")
+
+                        run_prediction_for_dimensionless(
+                            model=model,
+                            preprocessor=preprocessor,
+                            device=device,
+                            output_dir=regime_dir,
+                            zeta=regime_zeta,
+                            tau=tau,
+                            T_in=T_in,
+                            T_out=T_out,
+                            num_predictions=args.num_predictions,
+                            recursive_steps=args.recursive_steps
+                        )
+                    else:
+                        # Reżim wymuszony
+                        omega_lo, omega_hi = FORCED_OMEGA_GROUPS[ok]
+                        regime_omega = np.random.uniform(omega_lo, omega_hi)
+                        regime_omega = round(regime_omega, 4)
+
+                        print(f"\n{'=' * 40}")
+                        print(f"[{regime_idx+1}/{len(regimes)}] {regime_label}: WYMUSZONY (ζ={regime_zeta:.4f}, Ω={regime_omega:.4f})")
+                        print(f"{'=' * 40}")
+
+                        run_prediction_for_forced_dimensionless(
+                            model=model,
+                            preprocessor=preprocessor,
+                            device=device,
+                            output_dir=regime_dir,
+                            zeta=regime_zeta,
+                            omega=regime_omega,
+                            f0=f0,
+                            tau=tau,
+                            T_in=T_in,
+                            T_out=T_out,
+                            num_predictions=args.num_predictions,
+                            recursive_steps=args.recursive_steps
+                        )
+
+                # Zapisanie parametrów głównych
+                params_file = output_dir / 'parameters.txt'
+                with open(params_file, 'w', encoding='utf-8') as f:
+                    f.write(f"Tryb: wymuszony bezwymiarowy - {len(regimes)} rezimow\n")
+                    f.write(f"Seed: {seed}\n")
+                    f.write(f"T_in: {T_in}\n")
+                    f.write(f"T_out: {T_out}\n")
+                    f.write(f"dtau: {dtau}\n")
+                    f.write(f"tau_max: {tau_max}\n")
+                    f.write(f"F0: {f0}\n")
+                    f.write(f"num_predictions: {args.num_predictions}\n")
+                    f.write(f"recursive_steps: {args.recursive_steps}\n")
+                    f.write(f"\nRezimy:\n")
+                    for zk, ok in regimes:
+                        f.write(f"  {zk}{ok}\n")
 
         else:
             print(f"\nParametry oscylatora bezwymiarowego:")

@@ -342,14 +342,15 @@ class DimensionlessOscillator:
 
 # Stałe definiujące reżimy oscylatora wymuszonego bezwymiarowego
 FORCED_ZETA_GROUPS = {
-    'A': (0.00, 0.05),  # brak/minimalne tłumienie
-    'B': (0.05, 0.25),  # lekkie tłumienie
-    'C': (0.25, 0.85),  # spore tłumienie
+    'Z': (0.00, 0.007),  # praktycznie bez tłumienia
+    'A': (0.007, 0.05),  # minimalne tłumienie
+    'B': (0.05, 0.25),   # lekkie tłumienie
+    'C': (0.25, 0.85),   # spore tłumienie
 }
 FORCED_OMEGA_GROUPS = {
-    '1': (0.3, 0.7),    # poniżej rezonansu
-    '2': (0.7, 1.3),    # okolice rezonansu
-    '3': (1.3, 2.5),    # powyżej rezonansu
+    '1': (0.3, 0.9),    # poniżej rezonansu
+    '2': (0.9, 1.1),    # okolice rezonansu (zawężone)
+    '3': (1.1, 2.5),    # powyżej rezonansu
 }
 FORCED_F0 = 1.0
 
@@ -712,8 +713,9 @@ def generate_forced_dimensionless_dataset(
     if seed is not None:
         np.random.seed(seed)
 
-    num_regimes = 12  # 9 wymuszonych + 3 swobodnych
-    # Zaokrąglenie do wielokrotności 12
+    # Liczba reżimów: wymuszonych (ζ × Ω) + swobodnych (ζ)
+    num_regimes = len(FORCED_ZETA_GROUPS) * len(FORCED_OMEGA_GROUPS) + len(FORCED_ZETA_GROUPS)
+    # Zaokrąglenie do wielokrotności num_regimes
     num_trajectories = (num_trajectories // num_regimes) * num_regimes
     per_regime = num_trajectories // num_regimes
 
@@ -729,7 +731,7 @@ def generate_forced_dimensionless_dataset(
     zeta_keys = sorted(FORCED_ZETA_GROUPS.keys())
     omega_keys = sorted(FORCED_OMEGA_GROUPS.keys())
 
-    # 9 reżimów wymuszonych (ζ × Ω, F₀ > 0)
+    # Reżimy wymuszone (ζ × Ω, F₀ > 0)
     for zk in zeta_keys:
         zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
         for ok in omega_keys:
@@ -750,7 +752,7 @@ def generate_forced_dimensionless_dataset(
                 params_array[idx] = [zeta, omega]
                 idx += 1
 
-    # 3 reżimy swobodne (ζ, F₀ = 0 → drgania gasnące)
+    # Reżimy swobodne (ζ, F₀ = 0 → drgania gasnące)
     for zk in zeta_keys:
         zeta_lo, zeta_hi = FORCED_ZETA_GROUPS[zk]
         for _ in range(per_regime):
