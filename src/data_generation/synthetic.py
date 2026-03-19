@@ -391,6 +391,10 @@ class ForcedDimensionlessOscillator:
 
         self.params = ForcedDimensionlessParams(zeta=zeta, omega=omega, f0=f0)
 
+    def __init_onset__(self, tau_onset: float = 0.0):
+        """Ustaw opóźniony start wymuszenia — przed τ_onset układ w spoczynku."""
+        self._tau_onset = tau_onset
+
     def _equations_of_motion(
         self,
         state: np.ndarray,
@@ -401,7 +405,7 @@ class ForcedDimensionlessOscillator:
 
         Przekształcenie:
             dx/dτ = v_τ
-            dv_τ/dτ = -2ζ·v_τ - x + F₀·cos(Ωτ)
+            dv_τ/dτ = -2ζ·v_τ - x + F₀·cos(Ωτ)  (dla τ ≥ τ_onset)
 
         Args:
             state: Wektor stanu [x, v_τ] gdzie v_τ = dx/dτ
@@ -412,32 +416,42 @@ class ForcedDimensionlessOscillator:
         """
         x, v_tau = state
         dxdtau = v_tau
+        # Wymuszenie aktywne dopiero od τ_onset
+        tau_onset = getattr(self, '_tau_onset', 0.0)
+        forcing = self.params.f0 * np.cos(self.params.omega * tau) if tau >= tau_onset else 0.0
         dvdtau = (
             -2 * self.params.zeta * v_tau
             - x
-            + self.params.f0 * np.cos(self.params.omega * tau)
+            + forcing
         )
         return [dxdtau, dvdtau]
 
     def generate_trajectory(
         self,
-        tau: np.ndarray
+        tau: np.ndarray,
+        tau_onset: float = None
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Generuje trajektorię w czasie bezwymiarowym.
 
         Warunki początkowe są stałe: x(0)=1, dx/dτ(0)=0
+        Opcjonalnie z opóźnionym startem wymuszenia (τ_onset).
 
         Args:
             tau: Wektor czasu bezwymiarowego τ = ω₀·t
+            tau_onset: Moment startu wymuszenia (None = natychmiast)
 
         Returns:
             Tuple zawierający:
                 - x: Wektor położeń (bezwymiarowych)
                 - v_tau: Wektor prędkości bezwymiarowych (dx/dτ)
         """
-        # Stałe warunki początkowe
-        initial_state = [1.0, 0.0]  # x₀=1, v₀=0
+        if tau_onset is not None:
+            self._tau_onset = tau_onset
+            initial_state = [0.0, 0.0]  # układ startuje ze spoczynku
+        else:
+            self._tau_onset = 0.0
+            initial_state = [1.0, 0.0]  # x₀=1, v₀=0
 
         solution = odeint(self._equations_of_motion, initial_state, tau)
 
@@ -466,15 +480,19 @@ class ForcedDimensionlessOscillator:
 def add_noise(
     data: np.ndarray,
     noise_std: float = 0.01,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    relative: bool = True
 ) -> np.ndarray:
     """
     Dodaje szum gaussowski do danych.
 
     Args:
         data: Dane wejściowe (dowolny kształt)
-        noise_std: Odchylenie standardowe szumu
+        noise_std: Odchylenie standardowe szumu.
+            Jeśli relative=True: szum proporcjonalny do wartości (noise_std jako ułamek, np. 0.03 = 3%)
+            Jeśli relative=False: szum addytywny stały
         seed: Ziarno generatora losowego (opcjonalne)
+        relative: Jeśli True, szum proporcjonalny do |wartości| (symulacja czujnika)
 
     Returns:
         Dane z dodanym szumem
@@ -482,8 +500,142 @@ def add_noise(
     if seed is not None:
         np.random.seed(seed)
 
-    noise = np.random.normal(0, noise_std, data.shape)
+    if relative:
+        # Szum proporcjonalny: σ = noise_std * |wartość|
+        # Minimum σ = noise_std * min_floor (szum bazowy czujnika niezależny od wartości)
+        # Dla noise_std=0.03: min σ = 0.03 * 0.3 = 0.009 ≈ 1% amplitudy
+        min_floor = 0.3
+        sigma = noise_std * np.maximum(np.abs(data), min_floor)
+        noise = np.random.normal(0, 1, data.shape) * sigma
+    else:
+        noise = np.random.normal(0, noise_std, data.shape)
     return data + noise
+
+
+def add_dropout(data: np.ndarray, dropout_rate: float = 0.02) -> np.ndarray:
+    """
+    Symulacja brakujących próbek (utrata pakietów UDP, luki w transmisji).
+    Zastępuje losowe próbki interpolacją z sąsiednich wartości.
+
+    Args:
+        data: Macierz stanów (steps, 2)
+        dropout_rate: Odsetek próbek do usunięcia (0.0–0.1)
+    """
+    result = data.copy()
+    n = len(data)
+    num_drop = max(1, int(n * dropout_rate))
+    # Losowe indeksy do usunięcia (nie na brzegach)
+    drop_idx = np.random.choice(range(1, n - 1), size=min(num_drop, n - 2), replace=False)
+    for idx in drop_idx:
+        # Zastąp interpolacją liniową z sąsiadów
+        result[idx] = (result[idx - 1] + result[idx + 1]) / 2.0
+    return result
+
+
+def add_spikes(data: np.ndarray, spike_rate: float = 0.005, spike_magnitude: float = 5.0) -> np.ndarray:
+    """
+    Symulacja nagłych skoków wartości (zakłócenia EM, błędy komunikacji).
+
+    Args:
+        data: Macierz stanów (steps, 2)
+        spike_rate: Odsetek próbek ze skokiem (0.0–0.02)
+        spike_magnitude: Mnożnik amplitudy skoku (relative to data std)
+    """
+    result = data.copy()
+    n = len(data)
+    num_spikes = max(0, int(n * spike_rate))
+    if num_spikes == 0:
+        return result
+    spike_idx = np.random.choice(n, size=num_spikes, replace=False)
+    for col in range(data.shape[1]):
+        col_std = np.std(data[:, col])
+        if col_std > 0:
+            result[spike_idx, col] += np.random.choice([-1, 1], size=num_spikes) * spike_magnitude * col_std
+    return result
+
+
+def add_drift(data: np.ndarray, drift_magnitude: float = 0.1) -> np.ndarray:
+    """
+    Symulacja wolnozmiennego dryftu offsetu (temperatura, mechanika).
+    Dodaje losową wolnozmienną składową do sygnału.
+
+    Args:
+        data: Macierz stanów (steps, 2)
+        drift_magnitude: Amplituda dryftu (względem std danych)
+    """
+    result = data.copy()
+    n = len(data)
+    # Losowy dryft: sinusoida o bardzo niskiej częstotliwości
+    num_waves = np.random.uniform(0.5, 2.0)
+    phase = np.random.uniform(0, 2 * np.pi)
+    drift_wave = np.sin(np.linspace(0, num_waves * 2 * np.pi, n) + phase)
+    for col in range(data.shape[1]):
+        col_std = np.std(data[:, col])
+        if col_std > 0:
+            result[:, col] += drift_magnitude * col_std * drift_wave
+    return result
+
+
+def add_saturation(data: np.ndarray, clip_percentile: float = 95) -> np.ndarray:
+    """
+    Symulacja saturacji czujnika (ograniczony zakres pomiarowy).
+    Obcina wartości powyżej/poniżej losowo wybranego percentyla.
+
+    Args:
+        data: Macierz stanów (steps, 2)
+        clip_percentile: Percentyl obcięcia (80–99)
+    """
+    result = data.copy()
+    for col in range(data.shape[1]):
+        upper = np.percentile(data[:, col], clip_percentile)
+        lower = np.percentile(data[:, col], 100 - clip_percentile)
+        result[:, col] = np.clip(result[:, col], lower, upper)
+    return result
+
+
+def apply_sensor_augmentation(
+    state: np.ndarray,
+    noise_std: float = 0.03,
+    dropout_rate: float = 0.02,
+    spike_rate: float = 0.005,
+    drift_magnitude: float = 0.1,
+    saturation_clip: float = 95,
+    enable_dropout: bool = True,
+    enable_spikes: bool = True,
+    enable_drift: bool = True,
+    enable_saturation: bool = True,
+) -> np.ndarray:
+    """
+    Łączna augmentacja danych symulująca realistyczne warunki pomiarowe.
+    Każdy efekt stosowany losowo z 50% prawdopodobieństwem.
+
+    Args:
+        state: Macierz stanów (steps, 2)
+        noise_std: Szum proporcjonalny (3% = 0.03)
+        dropout_rate: Odsetek brakujących próbek
+        spike_rate: Odsetek skoków/spike'ów
+        drift_magnitude: Amplituda dryftu DC
+        saturation_clip: Percentyl obcięcia saturacji
+    """
+    # Szum pomiarowy (zawsze)
+    if noise_std > 0:
+        state = add_noise(state, noise_std, relative=True)
+
+    # Losowe efekty (każdy z 50% szansą)
+    if enable_dropout and np.random.random() < 0.5:
+        state = add_dropout(state, dropout_rate)
+
+    if enable_spikes and np.random.random() < 0.3:
+        state = add_spikes(state, spike_rate)
+
+    if enable_drift and np.random.random() < 0.4:
+        state = add_drift(state, drift_magnitude)
+
+    if enable_saturation and np.random.random() < 0.2:
+        clip = np.random.uniform(85, saturation_clip)
+        state = add_saturation(state, clip)
+
+    return state
 
 
 def generate_dataset(
@@ -676,12 +828,35 @@ def generate_dimensionless_dataset(
     }
 
 
+def quantize_state(state: np.ndarray, num_levels: int) -> np.ndarray:
+    """
+    Symulacja kwantyzacji cyfrowego czujnika.
+    Kwantyzuje dane do zadanej liczby poziomów w zakresie [-max, max].
+
+    Args:
+        state: Macierz stanów (steps, 2) — [x, dx/dτ]
+        num_levels: Liczba poziomów kwantyzacji (np. 20 = rozdzielczość 0.1 przy amplitudzie 1)
+
+    Returns:
+        Macierz stanów po kwantyzacji
+    """
+    result = state.copy()
+    for col in range(state.shape[1]):
+        col_max = np.max(np.abs(state[:, col]))
+        if col_max > 0:
+            step = 2 * col_max / num_levels
+            result[:, col] = np.round(state[:, col] / step) * step
+    return result
+
+
 def generate_forced_dimensionless_dataset(
     num_trajectories: int = 960,
     dtau: float = 0.1,
     tau_max: float = 80.0,
     zeta_range: Tuple[float, float] = (0.0, 0.85),
-    noise_std: float = 0.01,
+    noise_std: float = 0.03,
+    quantize_ratio: float = 0.5,
+    onset_ratio: float = 0.3,
     seed: Optional[int] = None
 ) -> Dict[str, np.ndarray]:
     """
@@ -702,6 +877,8 @@ def generate_forced_dimensionless_dataset(
         tau_max: Maksymalny czas bezwymiarowy
         zeta_range: Zakres ζ (informacyjny — faktyczne zakresy wynikają z grup)
         noise_std: Odchylenie standardowe szumu pomiarowego
+        quantize_ratio: Odsetek trajektorii z symulowaną kwantyzacją cyfrową (0.0–1.0)
+        onset_ratio: Odsetek trajektorii z opóźnionym startem wymuszenia (0.0–1.0)
         seed: Ziarno generatora losowego
 
     Returns:
@@ -743,10 +920,22 @@ def generate_forced_dimensionless_dataset(
                 oscillator = ForcedDimensionlessOscillator(
                     zeta=zeta, omega=omega, f0=FORCED_F0
                 )
-                state = oscillator.generate_state_space(tau)
 
-                if noise_std > 0:
-                    state = add_noise(state, noise_std)
+                # Losowo: opóźniony start wymuszenia (okres spoczynku → nagłe wzbudzenie)
+                if onset_ratio > 0 and np.random.random() < onset_ratio:
+                    tau_onset = np.random.uniform(5.0, tau_max * 0.3)
+                    x, v = oscillator.generate_trajectory(tau, tau_onset=tau_onset)
+                    state = np.column_stack([x, v])
+                else:
+                    state = oscillator.generate_state_space(tau)
+
+                # Augmentacja realistycznymi efektami czujnika
+                state = apply_sensor_augmentation(state, noise_std=noise_std)
+
+                # Kwantyzacja cyfrowa (losowo)
+                if quantize_ratio > 0 and np.random.random() < quantize_ratio:
+                    num_levels = np.random.randint(10, 51)
+                    state = quantize_state(state, num_levels)
 
                 trajectories[idx] = state
                 params_array[idx] = [zeta, omega]
@@ -761,11 +950,16 @@ def generate_forced_dimensionless_dataset(
             oscillator = DimensionlessOscillator(zeta=zeta)
             state = oscillator.generate_state_space(tau)
 
-            if noise_std > 0:
-                state = add_noise(state, noise_std)
+            # Augmentacja realistycznymi efektami czujnika
+            state = apply_sensor_augmentation(state, noise_std=noise_std)
+
+            # Kwantyzacja cyfrowa (losowo)
+            if quantize_ratio > 0 and np.random.random() < quantize_ratio:
+                num_levels = np.random.randint(10, 51)
+                state = quantize_state(state, num_levels)
 
             trajectories[idx] = state
-            params_array[idx] = [zeta, 0.0]  # omega=0 sygnalizuje brak wymuszenia
+            params_array[idx] = [zeta, 0.0]
             idx += 1
 
     # Losowe przemieszanie trajektorii

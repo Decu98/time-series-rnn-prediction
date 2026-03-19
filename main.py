@@ -138,8 +138,20 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '--noise-std',
         type=float,
-        default=0.01,
-        help='Odchylenie standardowe szumu pomiarowego'
+        default=0.03,
+        help='Szum pomiarowy proporcjonalny (0.03 = 3%% dokladnosci czujnika)'
+    )
+    parser.add_argument(
+        '--quantize-ratio',
+        type=float,
+        default=0.5,
+        help='Odsetek trajektorii z symulowana kwantyzacja cyfrowa (0.0-1.0, domyslnie: 0.5)'
+    )
+    parser.add_argument(
+        '--onset-ratio',
+        type=float,
+        default=0.3,
+        help='Odsetek trajektorii z opoznionym startem wymuszenia (0.0-1.0, domyslnie: 0.3)'
     )
     parser.add_argument(
         '--undamped-ratio',
@@ -431,6 +443,8 @@ def generate_forced_dimensionless_data(args: argparse.Namespace) -> Dict[str, np
         dtau=args.dtau,
         tau_max=args.tau_max,
         noise_std=args.noise_std,
+        quantize_ratio=args.quantize_ratio,
+        onset_ratio=args.onset_ratio,
         seed=args.seed
     )
 
